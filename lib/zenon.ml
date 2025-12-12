@@ -18,6 +18,11 @@ module Util = struct
       |> Filename.extension
     in
     if String.length s > 0 then String.sub s 1 (String.length s - 1) else ""
+
+  let with_ext path ext =
+    let a, b = Eio.Path.split path |> Option.get in
+    let c = Filename.remove_extension b ^ "." ^ ext in
+    Eio.Path.(a / c)
 end
 
 module Flags = struct
@@ -40,9 +45,8 @@ module Object_file = struct
     { source; path; flags = Option.value ~default:(Flags.v ()) flags }
 
   let of_source ?flags source =
-    let a, b = Eio.Path.split source.Source_file.path |> Option.get in
-    let obj_file = Filename.remove_extension b ^ ".o" in
-    v ?flags ~source @@ Eio.Path.(a / obj_file)
+    let obj_file = Util.with_ext source.Source_file.path "o" in
+    v ?flags ~source @@ obj_file
 end
 
 module Compiler = struct
@@ -52,6 +56,7 @@ module Compiler = struct
     ext : String_set.t;
     out_flag : string;
     obj_flag : string;
+    obj_map : string option;
   }
 
   let cc =
@@ -61,6 +66,7 @@ module Compiler = struct
       out_flag = "-o";
       obj_flag = "-c";
       ext = String_set.of_list [ "c" ];
+      obj_map = None;
     }
 
   let cxx =
@@ -68,10 +74,11 @@ module Compiler = struct
 
   let ocaml =
     {
-      exe = "ocamlopt";
-      args = [];
+      exe = "ocamlfind";
+      args = [ "ocamlopt" ];
       out_flag = "-o";
       obj_flag = "-c";
+      obj_map = Some "cmx";
       ext = String_set.of_list [ "ml" ];
     }
 
@@ -88,10 +95,18 @@ module Compiler = struct
 
   let link t mgr objs ~output args =
     let cmd = (t.exe :: t.args) @ args in
-    Eio.Process.run mgr
-      (cmd
-      @ List.map (fun f -> Eio.Path.native_exn f.Object_file.path) objs
-      @ [ t.out_flag; Eio.Path.native_exn output ])
+    let objs =
+      List.map
+        (fun f ->
+          Eio.Path.native_exn
+            (if String_set.mem (Source_file.ext f.Object_file.source) t.ext then
+               match t.obj_map with
+               | Some ext -> Util.with_ext f.Object_file.path ext
+               | None -> f.path
+             else f.path))
+        objs
+    in
+    Eio.Process.run mgr (cmd @ objs @ [ t.out_flag; Eio.Path.native_exn output ])
 end
 
 module Compiler_set = struct
@@ -166,6 +181,6 @@ let run t =
       t.source_files
   in
   List.iter (fun task -> Eio.Process.await_exn task) tasks;
-  Compiler.link Compiler.cxx t.env#process_mgr !objs
+  Compiler.link Compiler.ocaml t.env#process_mgr !objs
     ~output:Eio.Path.(t.source / "a.out")
     [ "-O3" ]
