@@ -29,6 +29,9 @@ module Flags = struct
   type t = { mutable compile : string list; mutable link : string list }
 
   let v ?(compile = []) ?(link = []) () = { compile; link }
+  let add_compile_flags t flags = t.compile <- t.compile @ flags
+  let add_link_flags t flags = t.link <- t.link @ flags
+  let concat a b = { compile = a.compile @ b.compile; link = a.link @ b.link }
 end
 
 module Source_file = struct
@@ -82,8 +85,8 @@ module Compiler = struct
       ext = String_set.of_list [ "ml" ];
     }
 
-  let compile_obj t mgr ~output =
-    let cmd = t.exe :: t.args in
+  let compile_obj t mgr ~output args =
+    let cmd = (t.exe :: t.args) @ args in
     Eio.Process.spawn mgr
       (cmd
       @ [
@@ -94,7 +97,7 @@ module Compiler = struct
         ])
 
   let link t mgr objs ~output args =
-    let cmd = (t.exe :: t.args) @ args in
+    let cmd = t.exe :: t.args in
     let objs =
       List.map
         (fun f ->
@@ -106,7 +109,8 @@ module Compiler = struct
              else f.path))
         objs
     in
-    Eio.Process.run mgr (cmd @ objs @ [ t.out_flag; Eio.Path.native_exn output ])
+    Eio.Process.run mgr
+      (cmd @ objs @ args @ [ t.out_flag; Eio.Path.native_exn output ])
 end
 
 module Compiler_set = struct
@@ -117,70 +121,109 @@ module Compiler_set = struct
   end)
 end
 
-type t = {
-  env : Eio_posix.stdenv;
-  source : path;
-  build : path;
-  compiler_index : (string, Compiler.t) Hashtbl.t;
-  compilers : Compiler_set.t;
-  mutable source_files : Source_file.t list;
-}
+module Build = struct
+  type t = {
+    env : Eio_posix.stdenv;
+    source : path;
+    build : path;
+    compiler_index : (string, Compiler.t) Hashtbl.t;
+    compilers : Compiler_set.t;
+    output : path;
+    mutable source_files : Source_file.t list;
+    mutable flags : Flags.t;
+  }
 
-let default_compilers = Compiler.[ cc; cxx; ocaml ]
+  let default_compilers = Compiler.[ cc; cxx; ocaml ]
 
-let v ?build ?(compilers = default_compilers) ~source env =
-  let compilers = Compiler_set.of_list compilers in
-  let build =
-    match build with None -> Eio.Path.(source / ".build") | Some path -> path
-  in
-  let compiler_index = Hashtbl.create 8 in
-  Compiler_set.iter
-    (fun c ->
-      String_set.iter
-        (fun ext -> Hashtbl.replace compiler_index ext c)
-        c.Compiler.ext)
-    compilers;
-  { env; source; build; compiler_index; compilers; source_files = [] }
+  let v ?build ?flags ?(compilers = default_compilers) ~source ~output env =
+    let compilers = Compiler_set.of_list compilers in
+    let build =
+      match build with
+      | None -> Eio.Path.(source / ".build")
+      | Some path -> path
+    in
+    let compiler_index = Hashtbl.create 8 in
+    Compiler_set.iter
+      (fun c ->
+        String_set.iter
+          (fun ext -> Hashtbl.replace compiler_index ext c)
+          c.Compiler.ext)
+      compilers;
+    {
+      env;
+      source;
+      build;
+      compiler_index;
+      compilers;
+      source_files = [];
+      flags = Option.value ~default:(Flags.v ()) flags;
+      output;
+    }
 
-let detect_source_files t ext =
-  let ext = String_set.of_list ext in
-  let files = Eio.Path.read_dir t.source in
-  let files =
-    List.filter_map
-      (fun file ->
-        let f = Eio.Path.(t.source / file) in
-        if Eio.Path.is_file f && String_set.mem (Util.ext f) ext then
-          Some (Source_file.v f)
-        else None)
-      files
-  in
-  t.source_files <- t.source_files @ files
+  let detect_source_files t ext =
+    let ext' = String_set.of_list ext in
+    let rec inner path =
+      let files = Eio.Path.read_dir path in
+      let files =
+        List.filter_map
+          (fun file ->
+            let f = Eio.Path.(path / file) in
+            if Eio.Path.is_directory f then
+              let () = inner f in
+              None
+            else if Eio.Path.is_file f && String_set.mem (Util.ext f) ext' then
+              Some (Source_file.v f)
+            else None)
+          files
+      in
+      t.source_files <- t.source_files @ files
+    in
+    inner t.source
 
-let run t =
-  let objs = ref [] in
-  Eio.Switch.run @@ fun sw ->
-  let tasks =
-    List.map
-      (fun source ->
-        let obj = Object_file.of_source source in
-        let compiler =
-          Hashtbl.find_opt t.compiler_index (Source_file.ext source)
-        in
-        match compiler with
-        | None ->
-            print_endline
-              ("no compiler found for " ^ Eio.Path.native_exn source.path);
-            failwith "No compiler"
-        | Some c ->
-            print_endline
-              ("found compiler for "
-              ^ Eio.Path.native_exn source.path
-              ^ ": " ^ c.Compiler.exe);
-            objs := obj :: !objs;
-            Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw)
-      t.source_files
-  in
-  List.iter (fun task -> Eio.Process.await_exn task) tasks;
-  Compiler.link Compiler.ocaml t.env#process_mgr !objs
-    ~output:Eio.Path.(t.source / "a.out")
-    [ "-O3" ]
+  let add_source_file t ?flags path =
+    let path = Eio.Path.(t.source / String.concat Filename.dir_sep path) in
+    t.source_files <- Source_file.v ?flags path :: t.source_files
+
+  let run t =
+    let objs = ref [] in
+    Eio.Switch.run @@ fun sw ->
+    let tasks =
+      List.map
+        (fun source ->
+          let obj = Object_file.of_source source in
+          let compiler =
+            Hashtbl.find_opt t.compiler_index (Source_file.ext source)
+          in
+          match compiler with
+          | None ->
+              print_endline
+                ("no compiler found for " ^ Eio.Path.native_exn source.path);
+              failwith "No compiler"
+          | Some c ->
+              print_endline
+                ("found compiler for "
+                ^ Eio.Path.native_exn source.path
+                ^ ": " ^ c.Compiler.exe);
+              objs := obj :: !objs;
+              Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
+                t.flags.compile)
+        t.source_files
+    in
+    List.iter (fun task -> Eio.Process.await_exn task) tasks;
+    Compiler.link Compiler.ocaml t.env#process_mgr !objs ~output:t.output
+      t.flags.link
+end
+
+module Workspace = struct
+  type t = { builds : Build.t list; flags : Flags.t }
+
+  let v ?flags builds =
+    { builds; flags = Option.value ~default:(Flags.v ()) flags }
+
+  let run { builds; flags; _ } =
+    List.iter
+      (fun b ->
+        let b = Build.{ b with flags = Flags.concat flags b.flags } in
+        Build.run b)
+      builds
+end
