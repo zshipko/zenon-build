@@ -1,0 +1,4 @@
+(executable
+ (public_name zenon)
+ (name main)
+ (libraries zenon))
