@@ -351,7 +351,7 @@ module Config = struct
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
-      detect_files : string list; [@default []]
+      detect : string list; [@default []]
       cflags : string list; [@default []]
       ldflags : string list; [@default []]
       script : string option; [@default None]
@@ -385,7 +385,7 @@ module Config = struct
                   compilers = [ Compiler_config.c ];
                   linker = Compiler_config.c;
                   files = [];
-                  detect_files = [ "c" ];
+                  detect = [ "c" ];
                   cflags = [];
                   ldflags = [];
                   script = None;
@@ -409,7 +409,7 @@ module Config = struct
         in
         let build =
           Build.v ?script:config.script ~flags ~linker ~compilers ?output
-            ~source ~detect:config.detect_files ~name:config.name env
+            ~source ~detect:config.detect ~name:config.name env
         in
         Build.add_source_files build
           (List.map
