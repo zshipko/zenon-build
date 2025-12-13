@@ -119,7 +119,7 @@ module Build = struct
     compiler_index : (string, Compiler.t) Hashtbl.t;
     compilers : Compiler_set.t;
     linker : Compiler.t;
-    output : path;
+    mutable output : path;
     mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
     mutable flags : Flags.t;
@@ -208,6 +208,11 @@ module Build = struct
   let run t =
     let objs = ref [] in
     Eio.Switch.run @@ fun sw ->
+    let pool =
+      Eio.Executor_pool.create ~sw
+        ~domain_count:(Domain.recommended_domain_count ())
+        t.env#domain_mgr
+    in
     let link_flags = ref t.flags in
     let tasks =
       List.map
@@ -227,11 +232,16 @@ module Build = struct
                 (Eio.Path.native_exn source.path)
                 c.Compiler.exe;
               objs := obj :: !objs;
-              Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
-                t.flags.compile)
+              Eio.Executor_pool.submit_fork ~sw pool ~weight:1.0 @@ fun () ->
+              Eio.Switch.run @@ fun sw ->
+              let res =
+                Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
+                  t.flags.compile
+              in
+              Eio.Process.await_exn res)
         t.source_files
     in
-    List.iter (fun task -> Eio.Process.await_exn task) tasks;
+    List.iter (fun task -> Eio.Promise.await_exn task) tasks;
     Eio.traceln "linking output: %s" (Eio.Path.native_exn t.output);
     Compiler.link t.linker t.env#process_mgr !objs ~output:t.output
       !link_flags.link
@@ -286,6 +296,7 @@ module Config = struct
 
   module Build_config = struct
     type t = {
+      path : string option; [@default None]
       output : string;
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
@@ -298,6 +309,7 @@ module Config = struct
 
     let append a b =
       {
+        path = a.path;
         output = a.output;
         compilers = a.compilers @ b.compilers;
         linker = a.linker;
@@ -308,15 +320,13 @@ module Config = struct
       }
   end
 
-  let build ~output ~compilers ~linker ~files ~detect_files ~cflags ~ldflags =
-    Build_config.
-      { output; compilers; linker; files; detect_files; cflags; ldflags }
+  type t = { build : Build_config.t list } [@@deriving yaml]
 
   let read_file path =
     try
       let s = Eio.Path.load path in
       let y = Yaml.of_string_exn s in
-      Build_config.of_yaml y
+      of_yaml y
     with exn -> Error (`Msg (Printexc.to_string exn))
 
   let rec read_file_or_default path =
@@ -325,31 +335,44 @@ module Config = struct
       read_file_or_default Eio.Path.(path / "zenon.yaml")
     else
       Ok
-        Build_config.
-          {
-            output = "a.out";
-            compilers = [ Compiler_config.c ];
-            linker = Compiler_config.c;
-            files = [];
-            detect_files = [ "c" ];
-            cflags = [];
-            ldflags = [];
-          }
+        {
+          build =
+            [
+              Build_config.
+                {
+                  output = "a.out";
+                  path = None;
+                  compilers = [ Compiler_config.c ];
+                  linker = Compiler_config.c;
+                  files = [];
+                  detect_files = [ "c" ];
+                  cflags = [];
+                  ldflags = [];
+                };
+            ];
+        }
 
   let init ~env path config =
-    let linker = Compiler_config.compiler config.Build_config.linker in
-    let compilers = List.map Compiler_config.compiler config.compilers in
-    let flags =
-      Flags.v ~compile:config.Build_config.cflags ~link:config.ldflags ()
-    in
-    let build =
-      Build.v ~flags ~linker ~compilers
-        ~output:Eio.Path.(path / config.output)
-        ~source:path ~detect:config.detect_files env
-    in
-    Build.detect build;
-    List.iter (fun file -> Build.add_source_file build file) config.files;
-    build
+    List.map
+      (fun config ->
+        let linker = Compiler_config.compiler config.Build_config.linker in
+        let compilers = List.map Compiler_config.compiler config.compilers in
+        let flags =
+          Flags.v ~compile:config.Build_config.cflags ~link:config.ldflags ()
+        in
+        let build =
+          Build.v ~flags ~linker ~compilers
+            ~output:Eio.Path.(path / config.output)
+            ~source:
+              (match config.path with
+              | None -> path
+              | Some p -> Eio.Path.(path / p))
+            ~detect:config.detect_files env
+        in
+        Build.detect build;
+        List.iter (fun file -> Build.add_source_file build file) config.files;
+        build)
+      config.build
 
   let load ~env path =
     let config = read_file_or_default path in
