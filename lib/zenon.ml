@@ -285,6 +285,7 @@ module Build = struct
           | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
         t.script
     in
+    detect t;
     let tasks =
       List.filter_map
         (fun source ->
@@ -471,7 +472,6 @@ module Config = struct
           (List.map
              (fun file -> Source_file.v ~root:source Eio.Path.(source / file))
              config.files);
-        Build.detect build;
         build)
       t.build
 
