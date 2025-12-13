@@ -11,6 +11,8 @@ module Path_set = Set.Make (struct
     String.compare a b
 end)
 
+let log fmt = Format.eprintf (fmt ^^ "\n%!")
+
 module Util = struct
   let ext path =
     let s =
@@ -88,10 +90,10 @@ module Compiler = struct
     in
     match st with
     | Some (obj, src) when obj.mtime > src.mtime ->
-        Eio.traceln "cached: %s" (Eio.Path.native_exn output.source.path);
+        log "CACHE %s" (Eio.Path.native_exn output.source.path);
         None
     | _ ->
-        Eio.traceln "compiling: %s" (Eio.Path.native_exn output.source.path);
+        log "-> %s" (Eio.Path.native_exn output.source.path);
         Util.mkparent output.Object_file.path;
         let cmd =
           (t.exe :: t.args) @ args
@@ -133,7 +135,9 @@ module Build = struct
     compilers : Compiler_set.t;
     linker : Compiler.t;
     ignore : Path_set.t;
-    mutable output : path;
+    script : string option;
+    name : string;
+    mutable output : path option;
     mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
     mutable flags : Flags.t;
@@ -143,8 +147,8 @@ module Build = struct
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?flags ?(linker = Compiler.cc) ?compilers ?detect ?(ignore = [])
-      ~source ~output env =
+  let v ?build ?script ?flags ?(linker = Compiler.cc) ?compilers ?detect
+      ?(ignore = []) ?output ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -173,28 +177,37 @@ module Build = struct
       compiler_index;
       compilers;
       linker;
-      source_files = [];
       detect_files;
+      script;
+      source_files = [];
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
       ignore = Path_set.of_list ignore;
+      name;
     }
 
   let detect_source_files t =
     let ext' = t.detect_files in
+    let known =
+      ref
+        (Path_set.of_list
+           (List.map (fun x -> x.Source_file.path) t.source_files))
+    in
     let rec inner path =
       let files = Eio.Path.read_dir path in
       let files =
         List.filter_map
           (fun file ->
             let f = Eio.Path.(path / file) in
-            if Eio.Path.is_directory f then
+            if Path_set.mem f !known then None
+            else if Eio.Path.is_directory f then
               let () = if not (String.equal file "zenon-build") then inner f in
               None
             else if String_set.mem (Util.ext f) ext' then Some (Source_file.v f)
             else None)
           files
       in
+      List.iter (fun f -> known := Path_set.add f.Source_file.path !known) files;
       t.source_files <- t.source_files @ files
     in
     inner t.source
@@ -216,8 +229,9 @@ module Build = struct
 
   let add_source_file t ?flags path =
     let path = Eio.Path.(t.source / path) in
-    t.source_files <- Source_file.v ?flags path :: t.source_files
+    t.source_files <- t.source_files @ [ Source_file.v ?flags path ]
 
+  let add_source_files t files = t.source_files <- t.source_files @ files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
   let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)
 
@@ -229,8 +243,18 @@ module Build = struct
         ~domain_count:(Domain.recommended_domain_count ())
         t.env#domain_mgr
     in
+    log "-> %s" t.name;
     let link_flags = ref t.flags in
     let visited = ref Path_set.empty in
+    let () =
+      Option.iter
+        (fun s ->
+          log "SCRIPT %s" s;
+          match Sys.command s with
+          | 0 -> ()
+          | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+        t.script
+    in
     let tasks =
       List.filter_map
         (fun source ->
@@ -247,7 +271,7 @@ module Build = struct
             match compiler with
             | None ->
                 let source_name = Eio.Path.native_exn source.Source_file.path in
-                Eio.traceln "no compiler found for %s" source_name;
+                log "ERROR: no compiler found for %s" source_name;
                 failwith ("no compiler found for " ^ source_name)
             | Some c ->
                 objs := obj :: !objs;
@@ -264,9 +288,12 @@ module Build = struct
         t.source_files
     in
     List.iter (fun task -> Eio.Promise.await_exn task) tasks;
-    Eio.traceln "linking output: %s" (Eio.Path.native_exn t.output);
-    Compiler.link t.linker t.env#process_mgr !objs ~output:t.output
-      !link_flags.link
+    Option.iter
+      (fun output ->
+        if not (List.is_empty t.source_files) then
+          log "LINK %s" (Eio.Path.native_exn output);
+        Compiler.link t.linker t.env#process_mgr !objs ~output !link_flags.link)
+      t.output
 end
 
 module Config = struct
@@ -318,28 +345,18 @@ module Config = struct
 
   module Build_config = struct
     type t = {
+      name : string;
       path : string option; [@default None]
-      output : string;
+      output : string option; [@default None]
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
       detect_files : string list; [@default []]
       cflags : string list; [@default []]
       ldflags : string list; [@default []]
+      script : string option; [@default None]
     }
     [@@deriving yaml]
-
-    let append a b =
-      {
-        path = a.path;
-        output = a.output;
-        compilers = a.compilers @ b.compilers;
-        linker = a.linker;
-        files = a.files @ b.files;
-        detect_files = a.detect_files @ b.detect_files;
-        cflags = a.cflags @ b.cflags;
-        ldflags = a.ldflags @ b.ldflags;
-      }
   end
 
   type t = { build : Build_config.t list } [@@deriving yaml]
@@ -362,7 +379,8 @@ module Config = struct
             [
               Build_config.
                 {
-                  output = "a.out";
+                  name = "default";
+                  output = Some "a.out";
                   path = None;
                   compilers = [ Compiler_config.c ];
                   linker = Compiler_config.c;
@@ -370,6 +388,7 @@ module Config = struct
                   detect_files = [ "c" ];
                   cflags = [];
                   ldflags = [];
+                  script = None;
                 };
             ];
         }
@@ -382,17 +401,21 @@ module Config = struct
         let flags =
           Flags.v ~compile:config.Build_config.cflags ~link:config.ldflags ()
         in
-        let build =
-          Build.v ~flags ~linker ~compilers
-            ~output:Eio.Path.(path / config.output)
-            ~source:
-              (match config.path with
-              | None -> path
-              | Some p -> Eio.Path.(path / p))
-            ~detect:config.detect_files env
+        let source =
+          match config.path with None -> path | Some p -> Eio.Path.(path / p)
         in
+        let output =
+          Option.map (fun output -> Eio.Path.(source / output)) config.output
+        in
+        let build =
+          Build.v ?script:config.script ~flags ~linker ~compilers ?output
+            ~source ~detect:config.detect_files ~name:config.name env
+        in
+        Build.add_source_files build
+          (List.map
+             (fun file -> Source_file.v Eio.Path.(source / file))
+             config.files);
         Build.detect build;
-        List.iter (fun file -> Build.add_source_file build file) config.files;
         build)
       config.build
 
