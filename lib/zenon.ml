@@ -92,6 +92,15 @@ module Compiler = struct
   let cxx =
     { cc with exe = "clang++"; ext = String_set.of_list [ "cc"; "cpp" ] }
 
+  let zig_cc =
+    {
+      exe = "zig";
+      args = [ "cc" ];
+      out_flag = "-o";
+      obj_flag = "-c";
+      ext = String_set.of_list [ "c" ];
+    }
+
   let compile_obj t mgr ~sw ~output args =
     let st =
       try
@@ -102,7 +111,9 @@ module Compiler = struct
     in
     match st with
     | Some (obj, src) when obj.mtime > src.mtime ->
-        log "• CACHE %s" (Eio.Path.native_exn output.source.path);
+        log "• CACHE %s (%s)"
+          (Eio.Path.native_exn output.source.path)
+          (Eio.Path.native_exn output.path);
         None
     | _ ->
         log "• BUILD %s -> %s"
@@ -301,7 +312,7 @@ module Build = struct
                 @@ fun () ->
                 Eio.Switch.run @@ fun sw ->
                 let flags =
-                  Hashtbl.find_opt t.compiler_flags c.Compiler.exe
+                  Hashtbl.find_opt t.compiler_flags (Source_file.ext source)
                   |> Option.value ~default:(Flags.v ())
                 in
                 let flags = Flags.concat source.flags flags in
@@ -329,21 +340,13 @@ module Config = struct
       name : string option; [@default None]
       command : string list; [@default []]
       ext : string list; [@default []]
-      out_flag : string; [@default "-o"]
-      obj_flag : string; [@default "-c"]
-      obj_map : string option; [@default None]
+      out_flag : string; [@default "-o"] [@key "out-flag"]
+      obj_flag : string; [@default "-c"] [@key "obj-flag"]
     }
     [@@deriving yaml]
 
     let default =
-      {
-        name = None;
-        command = [];
-        ext = [];
-        out_flag = "-o";
-        obj_flag = "-c";
-        obj_map = None;
-      }
+      { name = None; command = []; ext = []; out_flag = "-o"; obj_flag = "-c" }
 
     let c = { default with name = Some "c" }
     let cxx = { default with name = Some "c++" }
@@ -377,6 +380,15 @@ module Config = struct
     }
     [@@deriving yaml]
 
+    module Lang_flags = struct
+      type t = {
+        lang : string;
+        compile : string list; [@default []]
+        link : string list; [@default []]
+      }
+      [@@deriving yaml]
+    end
+
     type t = {
       name : string;
       path : string option; [@default None]
@@ -385,14 +397,18 @@ module Config = struct
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
       detect : string list; [@default []]
-      flags : flags; [@default { compile = []; link = [] }]
-      compiler_flags : (string * flags) list; [@default []]
+      flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
     }
     [@@deriving yaml]
   end
 
-  type t = { build : Build_config.t list } [@@deriving yaml]
+  type t = {
+    build : Build_config.t list;
+    flags : Build_config.Lang_flags.t list; [@default []]
+    compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
+  }
+  [@@deriving yaml]
 
   let read_file path =
     try
@@ -420,25 +436,25 @@ module Config = struct
                   files = [];
                   detect = [ "c" ];
                   script = None;
-                  flags = { compile = []; link = [] };
-                  compiler_flags = [];
+                  flags = [];
                 };
             ];
+          flags = [];
+          compilers = [ Compiler_config.c ];
         }
 
-  let init ~env path config =
+  let init ~env path t =
     List.map
       (fun config ->
         let linker = Compiler_config.compiler config.Build_config.linker in
-        let compilers = List.map Compiler_config.compiler config.compilers in
-        let flags =
-          Flags.v ~compile:config.Build_config.flags.compile
-            ~link:config.flags.link ()
+        let compilers =
+          List.map Compiler_config.compiler (t.compilers @ config.compilers)
         in
         let compiler_flags =
-          List.to_seq config.compiler_flags
-          |> Seq.map (fun (k, v) ->
-                 (k, Flags.v ~compile:v.Build_config.compile ~link:v.link ()))
+          List.to_seq (t.flags @ config.flags)
+          |> Seq.map (fun v ->
+                 ( v.Build_config.Lang_flags.lang,
+                   Flags.v ~compile:v.compile ~link:v.link () ))
           |> List.of_seq
         in
         let source =
@@ -448,9 +464,8 @@ module Config = struct
           Option.map (fun output -> Eio.Path.(source / output)) config.output
         in
         let build =
-          Build.v ?script:config.script ~flags ~linker ~compilers
-            ~compiler_flags ?output ~source ~detect:config.detect
-            ~name:config.name env
+          Build.v ?script:config.script ~linker ~compilers ~compiler_flags
+            ?output ~source ~detect:config.detect ~name:config.name env
         in
         Build.add_source_files build
           (List.map
@@ -458,7 +473,7 @@ module Config = struct
              config.files);
         Build.detect build;
         build)
-      config.build
+      t.build
 
   let load ~env path =
     let config = read_file_or_default path in
