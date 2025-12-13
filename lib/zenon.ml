@@ -78,7 +78,7 @@ module Compiler = struct
     }
 
   let cxx =
-    { cc with exe = "clang++"; ext = String_set.of_list [ "cpp"; "cc" ] }
+    { cc with exe = "clang++"; ext = String_set.of_list [ "cc"; "cpp" ] }
 
   let compile_obj t mgr ~sw ~output args =
     let st =
@@ -264,10 +264,10 @@ module Build = struct
           then None
           else
             let obj = Object_file.of_source ~build_dir:(obj_path t) source in
+            let () = link_flags := Flags.concat !link_flags source.flags in
             let compiler =
               Hashtbl.find_opt t.compiler_index (Source_file.ext source)
             in
-            link_flags := Flags.concat !link_flags source.flags;
             match compiler with
             | None ->
                 let source_name = Eio.Path.native_exn source.Source_file.path in
