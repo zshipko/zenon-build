@@ -29,6 +29,14 @@ module Util = struct
   let mkparent path =
     let parent = Eio.Path.split path |> Option.map fst in
     Option.iter (Eio.Path.mkdirs ~exists_ok:true ~perm:0o755) parent
+
+  let relative_to base a =
+    let prefix = Eio.Path.native_exn base in
+    let a = Eio.Path.native_exn a in
+    if String.starts_with ~prefix a then
+      let prefix_len = String.length prefix in
+      String.sub a (prefix_len + 1) (String.length a - prefix_len - 1)
+    else a
 end
 
 module Flags = struct
@@ -41,9 +49,11 @@ module Flags = struct
 end
 
 module Source_file = struct
-  type t = { path : path; flags : Flags.t }
+  type t = { path : path; flags : Flags.t; root : path }
 
-  let v ?flags path = { path; flags = Option.value ~default:(Flags.v ()) flags }
+  let v ?flags ~root path =
+    { path; flags = Option.value ~default:(Flags.v ()) flags; root }
+
   let ext { path; _ } = Util.ext path
 end
 
@@ -55,7 +65,9 @@ module Object_file = struct
 
   let of_source ?flags ~build_dir source =
     let obj_file = Util.with_ext source.Source_file.path "o" in
-    let obj_file = Eio.Path.(build_dir / Eio.Path.native_exn obj_file) in
+    let obj_file =
+      Eio.Path.(build_dir / Util.relative_to source.root obj_file)
+    in
     v ?flags ~source @@ obj_file
 end
 
@@ -93,7 +105,9 @@ module Compiler = struct
         log "• CACHE %s" (Eio.Path.native_exn output.source.path);
         None
     | _ ->
-        log "• BUILD %s" (Eio.Path.native_exn output.source.path);
+        log "• BUILD %s -> %s"
+          (Eio.Path.native_exn output.source.path)
+          (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
         let cmd =
           (t.exe :: t.args) @ args
@@ -141,14 +155,15 @@ module Build = struct
     mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
     mutable flags : Flags.t;
+    mutable compiler_flags : (string, Flags.t) Hashtbl.t;
   }
 
   let add_compile_flags t = Flags.add_compile_flags t.flags
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?script ?flags ?(linker = Compiler.cc) ?compilers ?detect
-      ?(ignore = []) ?output ~source ~name env =
+  let v ?build ?script ?flags ?(linker = Compiler.cc) ?compilers
+      ?(compiler_flags = []) ?detect ?(ignore = []) ?output ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -156,13 +171,14 @@ module Build = struct
     in
     let build =
       match build with
-      | None -> Eio.Path.(source / "zenon-build")
+      | None -> Eio.Path.(env#cwd / "zenon-build")
       | Some path -> path
     in
     let detect_files =
       String_set.of_list @@ Option.value ~default:[ "c" ] detect
     in
     Eio.Path.mkdirs ~exists_ok:true build ~perm:0o755;
+    let compiler_flags = Hashtbl.of_seq (List.to_seq compiler_flags) in
     let compiler_index = Hashtbl.create 8 in
     Compiler_set.iter
       (fun c ->
@@ -184,6 +200,7 @@ module Build = struct
       output;
       ignore = Path_set.of_list ignore;
       name;
+      compiler_flags;
     }
 
   let detect_source_files t =
@@ -203,7 +220,8 @@ module Build = struct
             else if Eio.Path.is_directory f then
               let () = if not (String.equal file "zenon-build") then inner f in
               None
-            else if String_set.mem (Util.ext f) ext' then Some (Source_file.v f)
+            else if String_set.mem (Util.ext f) ext' then
+              Some (Source_file.v ~root:t.source f)
             else None)
           files
       in
@@ -229,7 +247,8 @@ module Build = struct
 
   let add_source_file t ?flags path =
     let path = Eio.Path.(t.source / path) in
-    t.source_files <- t.source_files @ [ Source_file.v ?flags path ]
+    t.source_files <-
+      t.source_files @ [ Source_file.v ?flags ~root:t.source path ]
 
   let add_source_files t files = t.source_files <- t.source_files @ files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
@@ -263,11 +282,13 @@ module Build = struct
             || Path_set.mem source.path t.ignore
           then None
           else
-            let obj = Object_file.of_source ~build_dir:(obj_path t) source in
-            let () = link_flags := Flags.concat !link_flags source.flags in
+            let obj =
+              Object_file.of_source ~build_dir:Eio.Path.(t.build / "obj") source
+            in
             let compiler =
               Hashtbl.find_opt t.compiler_index (Source_file.ext source)
             in
+            let () = link_flags := Flags.concat !link_flags source.flags in
             match compiler with
             | None ->
                 let source_name = Eio.Path.native_exn source.Source_file.path in
@@ -279,9 +300,15 @@ module Build = struct
                 @@ Eio.Executor_pool.submit_fork ~sw pool ~weight:1.0
                 @@ fun () ->
                 Eio.Switch.run @@ fun sw ->
+                let flags =
+                  Hashtbl.find_opt t.compiler_flags c.Compiler.exe
+                  |> Option.value ~default:(Flags.v ())
+                in
+                let flags = Flags.concat source.flags flags in
+                let () = link_flags := Flags.concat !link_flags flags in
                 let res =
                   Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
-                    t.flags.compile
+                    (Flags.concat t.flags flags).compile
                 in
                 visited := Path_set.add source.path !visited;
                 Option.iter Eio.Process.await_exn res)
@@ -344,6 +371,12 @@ module Config = struct
   end
 
   module Build_config = struct
+    type flags = {
+      compile : string list; [@default []]
+      link : string list; [@default []]
+    }
+    [@@deriving yaml]
+
     type t = {
       name : string;
       path : string option; [@default None]
@@ -352,8 +385,8 @@ module Config = struct
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
       detect : string list; [@default []]
-      cflags : string list; [@default []]
-      ldflags : string list; [@default []]
+      flags : flags; [@default { compile = []; link = [] }]
+      compiler_flags : (string * flags) list; [@default []]
       script : string option; [@default None]
     }
     [@@deriving yaml]
@@ -386,9 +419,9 @@ module Config = struct
                   linker = Compiler_config.c;
                   files = [];
                   detect = [ "c" ];
-                  cflags = [];
-                  ldflags = [];
                   script = None;
+                  flags = { compile = []; link = [] };
+                  compiler_flags = [];
                 };
             ];
         }
@@ -399,7 +432,14 @@ module Config = struct
         let linker = Compiler_config.compiler config.Build_config.linker in
         let compilers = List.map Compiler_config.compiler config.compilers in
         let flags =
-          Flags.v ~compile:config.Build_config.cflags ~link:config.ldflags ()
+          Flags.v ~compile:config.Build_config.flags.compile
+            ~link:config.flags.link ()
+        in
+        let compiler_flags =
+          List.to_seq config.compiler_flags
+          |> Seq.map (fun (k, v) ->
+                 (k, Flags.v ~compile:v.Build_config.compile ~link:v.link ()))
+          |> List.of_seq
         in
         let source =
           match config.path with None -> path | Some p -> Eio.Path.(path / p)
@@ -408,12 +448,13 @@ module Config = struct
           Option.map (fun output -> Eio.Path.(source / output)) config.output
         in
         let build =
-          Build.v ?script:config.script ~flags ~linker ~compilers ?output
-            ~source ~detect:config.detect ~name:config.name env
+          Build.v ?script:config.script ~flags ~linker ~compilers
+            ~compiler_flags ?output ~source ~detect:config.detect
+            ~name:config.name env
         in
         Build.add_source_files build
           (List.map
-             (fun file -> Source_file.v Eio.Path.(source / file))
+             (fun file -> Source_file.v ~root:source Eio.Path.(source / file))
              config.files);
         Build.detect build;
         build)
