@@ -12,13 +12,14 @@ let path =
 
 let cflag =
   let doc = "Compiler flag" in
-  Arg.(value & opt_all string [] & info [ "cflag" ] ~doc ~docv:"FLAG")
+  Arg.(
+    value & opt_all string [] & info [ "flag:compile"; "fc" ] ~doc ~docv:"FLAG")
 
 let ldflag =
   let doc = "Linker flag" in
-  Arg.(value & opt_all string [] & info [ "ldflag" ] ~doc ~docv:"FLAG")
+  Arg.(value & opt_all string [] & info [ "flag:link"; "fl" ] ~doc ~docv:"FLAG")
 
-let main ?output cflags ldflags path =
+let build ?output cflags ldflags path =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#cwd / path) in
   let x =
@@ -38,14 +39,30 @@ let main ?output cflags ldflags path =
       Zenon.Build.run build)
     x
 
-let cmd_main =
-  Cmd.v (Cmd.info "zenon")
+let clean path =
+  Eio_posix.run @@ fun env ->
+  let path = Eio.Path.(env#cwd / path) in
+  let x =
+    match Zenon.Config.load ~env path with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean build) x
+
+let cmd_build =
+  Cmd.v (Cmd.info "build")
   @@
   let+ output = output
   and+ path = path
   and+ cflag = cflag
   and+ ldflag = ldflag in
-  main ?output cflag ldflag path
+  build ?output cflag ldflag path
 
-let main () = Cmd.eval cmd_main
+let cmd_clean =
+  Cmd.v (Cmd.info "clean")
+  @@
+  let+ path = path in
+  clean path
+
+let main () = Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_clean ]
 let () = if !Sys.interactive then () else exit (main ())

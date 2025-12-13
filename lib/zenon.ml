@@ -78,18 +78,31 @@ module Compiler = struct
   let cxx =
     { cc with exe = "clang++"; ext = String_set.of_list [ "cpp"; "cc" ] }
 
-  let compile_obj t mgr ~output args =
-    Util.mkparent output.Object_file.path;
-    let cmd =
-      (t.exe :: t.args) @ args
-      @ [
-          t.obj_flag;
-          Eio.Path.native_exn output.Object_file.source.path;
-          t.out_flag;
-          Eio.Path.native_exn output.Object_file.path;
-        ]
+  let compile_obj t mgr ~sw ~output args =
+    let st =
+      try
+        Option.some
+        @@ ( Eio.Path.stat ~follow:true output.Object_file.path,
+             Eio.Path.stat ~follow:true output.source.path )
+      with _ -> None
     in
-    Eio.Process.spawn mgr cmd
+    match st with
+    | Some (obj, src) when obj.mtime > src.mtime ->
+        Eio.traceln "cached: %s" (Eio.Path.native_exn output.source.path);
+        None
+    | _ ->
+        Eio.traceln "compiling: %s" (Eio.Path.native_exn output.source.path);
+        Util.mkparent output.Object_file.path;
+        let cmd =
+          (t.exe :: t.args) @ args
+          @ [
+              t.obj_flag;
+              Eio.Path.native_exn output.Object_file.source.path;
+              t.out_flag;
+              Eio.Path.native_exn output.Object_file.path;
+            ]
+        in
+        Some (Eio.Process.spawn mgr cmd ~sw)
 
   let link t mgr objs ~output args =
     Util.mkparent output;
@@ -119,6 +132,7 @@ module Build = struct
     compiler_index : (string, Compiler.t) Hashtbl.t;
     compilers : Compiler_set.t;
     linker : Compiler.t;
+    ignore : Path_set.t;
     mutable output : path;
     mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
@@ -129,8 +143,8 @@ module Build = struct
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?flags ?(linker = Compiler.cc) ?compilers ?detect ~source ~output
-      env =
+  let v ?build ?flags ?(linker = Compiler.cc) ?compilers ?detect ?(ignore = [])
+      ~source ~output env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -141,7 +155,9 @@ module Build = struct
       | None -> Eio.Path.(source / "zenon-build")
       | Some path -> path
     in
-    let detect_files = String_set.of_list @@ Option.value ~default:[] detect in
+    let detect_files =
+      String_set.of_list @@ Option.value ~default:[ "c" ] detect
+    in
     Eio.Path.mkdirs ~exists_ok:true build ~perm:0o755;
     let compiler_index = Hashtbl.create 8 in
     Compiler_set.iter
@@ -161,6 +177,7 @@ module Build = struct
       detect_files;
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
+      ignore = Path_set.of_list ignore;
     }
 
   let detect_source_files t =
@@ -174,8 +191,7 @@ module Build = struct
             if Eio.Path.is_directory f then
               let () = if not (String.equal file "zenon-build") then inner f in
               None
-            else if Eio.Path.is_file f && String_set.mem (Util.ext f) ext' then
-              Some (Source_file.v f)
+            else if String_set.mem (Util.ext f) ext' then Some (Source_file.v f)
             else None)
           files
       in
@@ -214,31 +230,37 @@ module Build = struct
         t.env#domain_mgr
     in
     let link_flags = ref t.flags in
+    let visited = ref Path_set.empty in
     let tasks =
-      List.map
+      List.filter_map
         (fun source ->
-          let obj = Object_file.of_source ~build_dir:(obj_path t) source in
-          let compiler =
-            Hashtbl.find_opt t.compiler_index (Source_file.ext source)
-          in
-          link_flags := Flags.concat !link_flags source.flags;
-          match compiler with
-          | None ->
-              Eio.traceln "no compiler found for %s"
-              @@ Eio.Path.native_exn source.path;
-              failwith "No compiler"
-          | Some c ->
-              Eio.traceln "found compiler for %s: %s"
-                (Eio.Path.native_exn source.path)
-                c.Compiler.exe;
-              objs := obj :: !objs;
-              Eio.Executor_pool.submit_fork ~sw pool ~weight:1.0 @@ fun () ->
-              Eio.Switch.run @@ fun sw ->
-              let res =
-                Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
-                  t.flags.compile
-              in
-              Eio.Process.await_exn res)
+          if
+            Path_set.mem source.Source_file.path !visited
+            || Path_set.mem source.path t.ignore
+          then None
+          else
+            let obj = Object_file.of_source ~build_dir:(obj_path t) source in
+            let compiler =
+              Hashtbl.find_opt t.compiler_index (Source_file.ext source)
+            in
+            link_flags := Flags.concat !link_flags source.flags;
+            match compiler with
+            | None ->
+                let source_name = Eio.Path.native_exn source.Source_file.path in
+                Eio.traceln "no compiler found for %s" source_name;
+                failwith ("no compiler found for " ^ source_name)
+            | Some c ->
+                objs := obj :: !objs;
+                Option.some
+                @@ Eio.Executor_pool.submit_fork ~sw pool ~weight:1.0
+                @@ fun () ->
+                Eio.Switch.run @@ fun sw ->
+                let res =
+                  Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
+                    t.flags.compile
+                in
+                visited := Path_set.add source.path !visited;
+                Option.iter Eio.Process.await_exn res)
         t.source_files
     in
     List.iter (fun task -> Eio.Promise.await_exn task) tasks;
@@ -301,7 +323,7 @@ module Config = struct
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
-      detect_files : string list; [@default [ "c" ]]
+      detect_files : string list; [@default []]
       cflags : string list; [@default []]
       ldflags : string list; [@default []]
     }
