@@ -366,11 +366,11 @@ module Config = struct
       { name = None; command = []; ext = []; out_flag = "-o"; obj_flag = "-c" }
 
     let c = { default with name = Some "c" }
-    let cxx = { default with name = Some "c++" }
+    let cxx = { default with name = Some "cpp" }
 
     let find_compiler = function
-      | "c" | "cc" -> Some Compiler.cc
-      | "c++" | "cxx" -> Some Compiler.cxx
+      | "c" -> Some Compiler.cc
+      | "cc" | "cpp" -> Some Compiler.cxx
       | _ -> None
 
     let rec compiler t =
