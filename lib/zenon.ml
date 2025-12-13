@@ -73,8 +73,7 @@ end
 
 module Compiler = struct
   type t = {
-    exe : string;
-    args : string list;
+    command : string list;
     ext : String_set.t;
     out_flag : string;
     obj_flag : string;
@@ -82,20 +81,22 @@ module Compiler = struct
 
   let cc =
     {
-      exe = "clang";
-      args = [];
+      command = [ "clang" ];
       out_flag = "-o";
       obj_flag = "-c";
       ext = String_set.of_list [ "c" ];
     }
 
   let cxx =
-    { cc with exe = "clang++"; ext = String_set.of_list [ "cc"; "cpp" ] }
+    {
+      cc with
+      command = [ "clang++" ];
+      ext = String_set.of_list [ "cc"; "cpp" ];
+    }
 
   let zig_cc =
     {
-      exe = "zig";
-      args = [ "cc" ];
+      command = [ "zig"; "cc" ];
       out_flag = "-o";
       obj_flag = "-c";
       ext = String_set.of_list [ "c" ];
@@ -121,7 +122,7 @@ module Compiler = struct
           (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
         let cmd =
-          (t.exe :: t.args) @ args
+          t.command @ args
           @ [
               t.obj_flag;
               Eio.Path.native_exn output.Object_file.source.path;
@@ -133,11 +134,12 @@ module Compiler = struct
 
   let link t mgr objs ~output args =
     Util.mkparent output;
-    let cmd = t.exe :: t.args in
     let objs =
       List.map (fun f -> Eio.Path.native_exn f.Object_file.path) objs
     in
-    let args = cmd @ args @ objs @ [ t.out_flag; Eio.Path.native_exn output ] in
+    let args =
+      t.command @ args @ objs @ [ t.out_flag; Eio.Path.native_exn output ]
+    in
     Eio.Process.run mgr args
 end
 
@@ -145,7 +147,8 @@ module Compiler_set = struct
   include Set.Make (struct
     type t = Compiler.t
 
-    let compare a b = String.compare a.Compiler.exe b.Compiler.exe
+    let compare a b =
+      List.compare String.compare a.Compiler.command b.Compiler.command
   end)
 
   let default = of_list Compiler.[ cc; cxx ]
@@ -161,7 +164,9 @@ module Build = struct
     linker : Compiler.t;
     ignore : Path_set.t;
     script : string option;
+    after : string option;
     name : string;
+    mutable disable_cache : bool;
     mutable output : path option;
     mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
@@ -173,8 +178,9 @@ module Build = struct
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?script ?flags ?(linker = Compiler.cc) ?compilers
-      ?(compiler_flags = []) ?detect ?(ignore = []) ?output ~source ~name env =
+  let v ?build ?script ?after ?flags ?(linker = Compiler.cc) ?compilers
+      ?(compiler_flags = []) ?detect ?(ignore = []) ?(disable_cache = false)
+      ?output ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -206,12 +212,14 @@ module Build = struct
       linker;
       detect_files;
       script;
+      after;
       source_files = [];
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
       ignore = Path_set.of_list ignore;
       name;
       compiler_flags;
+      disable_cache;
     }
 
   let detect_source_files t =
@@ -267,12 +275,7 @@ module Build = struct
 
   let run t =
     let objs = ref [] in
-    Eio.Switch.run @@ fun sw ->
-    let pool =
-      Eio.Executor_pool.create ~sw
-        ~domain_count:(Domain.recommended_domain_count ())
-        t.env#domain_mgr
-    in
+    let pool = Eio.Semaphore.make (Domain.recommended_domain_count ()) in
     log "◎ RUN %s" t.name;
     let link_flags = ref t.flags in
     let visited = ref Path_set.empty in
@@ -290,8 +293,9 @@ module Build = struct
       List.filter_map
         (fun source ->
           if
-            Path_set.mem source.Source_file.path !visited
-            || Path_set.mem source.path t.ignore
+            (not t.disable_cache)
+            && (Path_set.mem source.Source_file.path !visited
+               || Path_set.mem source.path t.ignore)
           then None
           else
             let obj =
@@ -308,8 +312,11 @@ module Build = struct
                 failwith ("no compiler found for " ^ source_name)
             | Some c ->
                 objs := obj :: !objs;
-                Option.some
-                @@ Eio.Executor_pool.submit_fork ~sw pool ~weight:1.0
+                Option.some @@ Eio.Switch.run
+                @@ fun sw ->
+                Eio.Fiber.fork_promise ~sw @@ fun () ->
+                Eio.Semaphore.acquire pool;
+                Fun.protect ~finally:(fun () -> Eio.Semaphore.release pool)
                 @@ fun () ->
                 Eio.Switch.run @@ fun sw ->
                 let flags =
@@ -327,6 +334,15 @@ module Build = struct
         t.source_files
     in
     List.iter (fun task -> Eio.Promise.await_exn task) tasks;
+    let () =
+      Option.iter
+        (fun s ->
+          log "• SCRIPT %s" s;
+          match Sys.command s with
+          | 0 -> ()
+          | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+        t.after
+    in
     Option.iter
       (fun output ->
         if not (List.is_empty t.source_files) then
@@ -366,8 +382,7 @@ module Config = struct
       | None ->
           Compiler.
             {
-              exe = List.hd t.command;
-              args = List.tl t.command;
+              command = t.command;
               ext = String_set.of_list t.ext;
               out_flag = t.out_flag;
               obj_flag = t.obj_flag;
@@ -400,8 +415,25 @@ module Config = struct
       detect : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
+      after : string option; [@default None]
+      disable_cache : bool; [@default false]
     }
     [@@deriving yaml]
+
+    let default =
+      {
+        name = "default";
+        output = Some "a.out";
+        path = None;
+        compilers = [ Compiler_config.c ];
+        linker = Compiler_config.c;
+        files = [];
+        detect = [ "c" ];
+        script = None;
+        after = None;
+        flags = [];
+        disable_cache = false;
+      }
   end
 
   type t = {
@@ -410,6 +442,13 @@ module Config = struct
     compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
   }
   [@@deriving yaml]
+
+  let default =
+    {
+      build = [ Build_config.default ];
+      flags = [];
+      compilers = [ Compiler_config.c ];
+    }
 
   let read_file path =
     try
@@ -422,27 +461,7 @@ module Config = struct
     if Eio.Path.is_file path then read_file path
     else if Eio.Path.is_directory path then
       read_file_or_default Eio.Path.(path / "zenon.yaml")
-    else
-      Ok
-        {
-          build =
-            [
-              Build_config.
-                {
-                  name = "default";
-                  output = Some "a.out";
-                  path = None;
-                  compilers = [ Compiler_config.c ];
-                  linker = Compiler_config.c;
-                  files = [];
-                  detect = [ "c" ];
-                  script = None;
-                  flags = [];
-                };
-            ];
-          flags = [];
-          compilers = [ Compiler_config.c ];
-        }
+    else Ok default
 
   let init ~env path t =
     List.map
@@ -465,8 +484,9 @@ module Config = struct
           Option.map (fun output -> Eio.Path.(source / output)) config.output
         in
         let build =
-          Build.v ?script:config.script ~linker ~compilers ~compiler_flags
-            ?output ~source ~detect:config.detect ~name:config.name env
+          Build.v ?script:config.script ?after:config.after ~linker ~compilers
+            ~compiler_flags ?output ~source ~detect:config.detect
+            ~name:config.name env
         in
         Build.add_source_files build
           (List.map
