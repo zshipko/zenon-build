@@ -1,35 +1,12 @@
 let () =
   Eio_posix.run @@ fun env ->
-  let source = env#cwd in
-  let file = Eio.Path.load Eio.Path.(source / "zenon.yaml") in
-  let config =
-    match Zenon.Config.of_yaml (Yaml.of_string_exn file) with
-    | Ok x -> x
-    | Error (`Msg msg) -> failwith msg
+  let path =
+    if Array.length Sys.argv > 1 then Eio.Path.(env#cwd / Sys.argv.(1))
+    else env#cwd
   in
-  (* let config = *)
-  (* Zenon.Config. *)
-  (* { *)
-  (* cflags = []; *)
-  (* ldflags = []; *)
-  (* build = *)
-  (* [ *)
-  (* Zenon.Config.Build_config. *)
-  (* { *)
-  (* name = None; *)
-  (* import = []; *)
-  (* output = "test"; *)
-  (* compilers = [ "cc"; "ocaml" ]; *)
-  (* linker = "ocaml"; *)
-  (* detect_source = [ "c"; "ml" ]; *)
-  (* cflags = []; *)
-  (* ldflags = []; *)
-  (* files = []; *)
-  (* }; *)
-  (* ]; *)
-  (* root = Eio.Path.native_exn source; *)
-  (* } *)
-  (* in *)
-  let w = Zenon.Config.workspace config ~env source in
-  Zenon.Workspace.run w
-(* Zenon.Workspace.clean_obj w *)
+  let x =
+    match Zenon.Config.load ~env path with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  Zenon.Build.run x

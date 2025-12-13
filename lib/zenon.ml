@@ -64,7 +64,6 @@ module Compiler = struct
     ext : String_set.t;
     out_flag : string;
     obj_flag : string;
-    obj_map : string option;
   }
 
   let cc =
@@ -74,21 +73,10 @@ module Compiler = struct
       out_flag = "-o";
       obj_flag = "-c";
       ext = String_set.of_list [ "c" ];
-      obj_map = None;
     }
 
   let cxx =
     { cc with exe = "clang++"; ext = String_set.of_list [ "cpp"; "cc" ] }
-
-  let ocaml =
-    {
-      exe = "ocamlfind";
-      args = [ "ocamlopt" ];
-      out_flag = "-o";
-      obj_flag = "-c";
-      obj_map = Some "cmx";
-      ext = String_set.of_list [ "ml" ];
-    }
 
   let compile_obj t mgr ~output args =
     Util.mkparent output.Object_file.path;
@@ -107,15 +95,7 @@ module Compiler = struct
     Util.mkparent output;
     let cmd = t.exe :: t.args in
     let objs =
-      List.map
-        (fun f ->
-          Eio.Path.native_exn
-            (if String_set.mem (Source_file.ext f.Object_file.source) t.ext then
-               match t.obj_map with
-               | Some ext -> Util.with_ext f.Object_file.path ext
-               | None -> f.path
-             else f.path))
-        objs
+      List.map (fun f -> Eio.Path.native_exn f.Object_file.path) objs
     in
     let args = cmd @ args @ objs @ [ t.out_flag; Eio.Path.native_exn output ] in
     Eio.Process.run mgr args
@@ -128,7 +108,7 @@ module Compiler_set = struct
     let compare a b = String.compare a.Compiler.exe b.Compiler.exe
   end)
 
-  let default = of_list Compiler.[ cc; cxx; ocaml ]
+  let default = of_list Compiler.[ cc; cxx ]
 end
 
 module Build = struct
@@ -140,6 +120,7 @@ module Build = struct
     compilers : Compiler_set.t;
     linker : Compiler.t;
     output : path;
+    mutable detect_files : String_set.t;
     mutable source_files : Source_file.t list;
     mutable flags : Flags.t;
   }
@@ -148,7 +129,8 @@ module Build = struct
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?flags ?(linker = Compiler.cc) ?compilers ~source ~output env =
+  let v ?build ?flags ?(linker = Compiler.cc) ?compilers ?detect ~source ~output
+      env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -159,6 +141,7 @@ module Build = struct
       | None -> Eio.Path.(source / "zenon-build")
       | Some path -> path
     in
+    let detect_files = String_set.of_list @@ Option.value ~default:[] detect in
     Eio.Path.mkdirs ~exists_ok:true build ~perm:0o755;
     let compiler_index = Hashtbl.create 8 in
     Compiler_set.iter
@@ -175,12 +158,13 @@ module Build = struct
       compilers;
       linker;
       source_files = [];
+      detect_files;
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
     }
 
-  let detect_source_files t ext =
-    let ext' = String_set.of_list ext in
+  let detect_source_files t =
+    let ext' = t.detect_files in
     let rec inner path =
       let files = Eio.Path.read_dir path in
       let files =
@@ -198,6 +182,21 @@ module Build = struct
       t.source_files <- t.source_files @ files
     in
     inner t.source
+
+  let parse_compile_flags t f =
+    Eio.Path.with_lines f @@ fun lines ->
+    let lines = Seq.map String.trim lines |> List.of_seq in
+    add_compile_flags t lines
+
+  let detect_flags_from_compile_flags t =
+    let f = Eio.Path.(t.source / "compile_flags.txt") in
+    if Eio.Path.is_file f then parse_compile_flags t f
+    else if Eio.Path.is_file Eio.Path.(t.env#cwd / "compile_flags.txt") then
+      parse_compile_flags t Eio.Path.(t.env#cwd / "compile_flags.txt")
+
+  let detect t =
+    detect_source_files t;
+    detect_flags_from_compile_flags t
 
   let add_source_file t ?flags path =
     let path = Eio.Path.(t.source / path) in
@@ -238,23 +237,6 @@ module Build = struct
       !link_flags.link
 end
 
-module Workspace = struct
-  type t = { root : path; mutable builds : Build.t list; flags : Flags.t }
-
-  let v ?flags root builds =
-    { builds; root; flags = Option.value ~default:(Flags.v ()) flags }
-
-  let run { builds; flags; _ } =
-    List.iter
-      (fun b ->
-        let b = Build.{ b with flags = Flags.concat flags b.flags } in
-        Build.run b)
-      builds
-
-  let clean_obj t = List.iter Build.clean_obj t.builds
-  let clean t = List.iter Build.clean t.builds
-end
-
 module Config = struct
   module Compiler_config = struct
     type t = {
@@ -278,13 +260,11 @@ module Config = struct
       }
 
     let c = { default with name = Some "c" }
-    let ocaml = { default with name = Some "ocaml" }
     let cxx = { default with name = Some "c++" }
 
     let find_compiler = function
       | "c" | "cc" -> Some Compiler.cc
       | "c++" | "cxx" -> Some Compiler.cxx
-      | "ml" | "ocaml" -> Some Compiler.ocaml
       | _ -> None
 
     let rec compiler t =
@@ -300,19 +280,14 @@ module Config = struct
               args = List.tl t.command;
               ext = String_set.of_list t.ext;
               out_flag = t.out_flag;
-              obj_map = t.obj_map;
               obj_flag = t.obj_flag;
             }
   end
 
   module Build_config = struct
     type t = {
-      name : string option;
-      (* import : string list; [@default []] *)
       output : string;
-      compilers : Compiler_config.t list;
-          [@default
-            [ Compiler_config.c; Compiler_config.cxx; Compiler_config.ocaml ]]
+      compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default []]
       detect_files : string list; [@default [ "c" ]]
@@ -323,7 +298,6 @@ module Config = struct
 
     let append a b =
       {
-        name = a.name;
         output = a.output;
         compilers = a.compilers @ b.compilers;
         linker = a.linker;
@@ -334,51 +308,52 @@ module Config = struct
       }
   end
 
-  type t = {
-    root : string; [@default "."]
-    build : Build_config.t list;
-    compilers : Compiler_config.t list; [@default []]
-    cflags : string list; [@default []]
-    ldflags : string list; [@default []]
-  }
-  [@@deriving yaml]
-
-  let build t ~name ~output ~compilers ~linker ~files ~detect_files ~cflags
-      ~ldflags =
+  let build ~output ~compilers ~linker ~files ~detect_files ~cflags ~ldflags =
     Build_config.
-      {
-        name;
-        output;
-        compilers;
-        linker;
-        files;
-        detect_files;
-        cflags = t.cflags @ cflags;
-        ldflags = t.ldflags @ ldflags;
-      }
+      { output; compilers; linker; files; detect_files; cflags; ldflags }
 
-  let workspace t ~env path =
-    let flags = Flags.v ~compile:t.cflags ~link:t.ldflags () in
-    let build =
-      List.map
-        (fun (b : Build_config.t) ->
-          let flags =
-            Flags.(concat flags (v ~compile:b.cflags ~link:b.ldflags ()))
-          in
-          let linker = Compiler_config.compiler b.linker in
-          let compilers =
-            List.map
-              (fun c -> Compiler_config.compiler c)
-              (t.compilers @ b.compilers)
-          in
-          let name = Option.value ~default:"." b.name in
-          let source = Eio.Path.(path / name) in
-          let output = Eio.Path.(source / b.output) in
-          let build = Build.v ~flags ~linker ~compilers ~source ~output env in
-          Build.detect_source_files build b.detect_files;
-          List.iter (Build.add_source_file build) b.files;
-          build)
-        t.build
+  let read_file path =
+    try
+      let s = Eio.Path.load path in
+      let y = Yaml.of_string_exn s in
+      Build_config.of_yaml y
+    with exn -> Error (`Msg (Printexc.to_string exn))
+
+  let rec read_file_or_default path =
+    if Eio.Path.is_file path then read_file path
+    else if Eio.Path.is_directory path then
+      read_file_or_default Eio.Path.(path / "zenon.yaml")
+    else
+      Ok
+        Build_config.
+          {
+            output = "a.out";
+            compilers = [ Compiler_config.c ];
+            linker = Compiler_config.c;
+            files = [];
+            detect_files = [ "c" ];
+            cflags = [];
+            ldflags = [];
+          }
+
+  let init ~env path config =
+    let linker = Compiler_config.compiler config.Build_config.linker in
+    let compilers = List.map Compiler_config.compiler config.compilers in
+    let flags =
+      Flags.v ~compile:config.Build_config.cflags ~link:config.ldflags ()
     in
-    Workspace.v ~flags path build
+    let build =
+      Build.v ~flags ~linker ~compilers
+        ~output:Eio.Path.(path / config.output)
+        ~source:path ~detect:config.detect_files env
+    in
+    Build.detect build;
+    List.iter (fun file -> Build.add_source_file build file) config.files;
+    build
+
+  let load ~env path =
+    let config = read_file_or_default path in
+    match config with
+    | Ok config -> Ok (init ~env path config)
+    | Error e -> Error e
 end
