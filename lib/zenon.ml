@@ -11,7 +11,7 @@ module Path_set = Set.Make (struct
     String.compare a b
 end)
 
-let log fmt = Format.eprintf (fmt ^^ "\n%!")
+let log fmt = Fmt.epr (fmt ^^ "\n%!")
 
 module Util = struct
   let ext path =
@@ -93,7 +93,7 @@ module Compiler = struct
         log "• CACHE %s" (Eio.Path.native_exn output.source.path);
         None
     | _ ->
-        log "• BUILD  %s" (Eio.Path.native_exn output.source.path);
+        log "• BUILD %s" (Eio.Path.native_exn output.source.path);
         Util.mkparent output.Object_file.path;
         let cmd =
           (t.exe :: t.args) @ args
@@ -243,7 +243,7 @@ module Build = struct
         ~domain_count:(Domain.recommended_domain_count ())
         t.env#domain_mgr
     in
-    log "◎ %s" t.name;
+    log "◎ RUN %s" t.name;
     let link_flags = ref t.flags in
     let visited = ref Path_set.empty in
     let () =
