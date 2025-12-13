@@ -90,10 +90,10 @@ module Compiler = struct
     in
     match st with
     | Some (obj, src) when obj.mtime > src.mtime ->
-        log "CACHE %s" (Eio.Path.native_exn output.source.path);
+        log "• CACHE %s" (Eio.Path.native_exn output.source.path);
         None
     | _ ->
-        log "-> %s" (Eio.Path.native_exn output.source.path);
+        log "• BUILD  %s" (Eio.Path.native_exn output.source.path);
         Util.mkparent output.Object_file.path;
         let cmd =
           (t.exe :: t.args) @ args
@@ -243,13 +243,13 @@ module Build = struct
         ~domain_count:(Domain.recommended_domain_count ())
         t.env#domain_mgr
     in
-    log "-> %s" t.name;
+    log "◎ %s" t.name;
     let link_flags = ref t.flags in
     let visited = ref Path_set.empty in
     let () =
       Option.iter
         (fun s ->
-          log "SCRIPT %s" s;
+          log "• SCRIPT %s" s;
           match Sys.command s with
           | 0 -> ()
           | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
@@ -291,7 +291,7 @@ module Build = struct
     Option.iter
       (fun output ->
         if not (List.is_empty t.source_files) then
-          log "LINK %s" (Eio.Path.native_exn output);
+          log "⁕ LINK %s" (Eio.Path.native_exn output);
         Compiler.link t.linker t.env#process_mgr !objs ~output !link_flags.link)
       t.output
 end
