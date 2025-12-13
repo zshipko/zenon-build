@@ -47,6 +47,17 @@ let build ?output ~cflags ~ldflags ~path ~builds () =
       Zenon.Build.run build)
     x
 
+let build2 ?output:_ ~cflags:_ ~ldflags:_ ~path ~builds:_ () =
+  Eio_posix.run @@ fun env ->
+  let x =
+    match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  let plan = Zenon.Plan.v () in
+  let () = List.iter (Zenon.Plan.build plan) x in
+  Zenon.Plan.run_all plan
+
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
@@ -72,11 +83,23 @@ let cmd_build =
   and+ ldflags = ldflag in
   build ?output ~cflags ~ldflags ~path ~builds ()
 
+let cmd_build2 =
+  Cmd.v (Cmd.info "build2")
+  @@
+  let+ output = output
+  and+ path = path
+  and+ builds = builds
+  and+ cflags = cflag
+  and+ ldflags = ldflag in
+  build2 ?output ~cflags ~ldflags ~path ~builds ()
+
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
   @@
   let+ builds = builds and+ path = path in
   clean ~path ~builds ()
 
-let main () = Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_clean ]
+let main () =
+  Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_clean; cmd_build2 ]
+
 let () = if !Sys.interactive then () else exit (main ())

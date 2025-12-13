@@ -351,6 +351,153 @@ module Build = struct
       t.output
 end
 
+type value =
+  | Build of Build.t
+  | Src of Source_file.t
+  | Obj of Object_file.t
+  | Output of path
+
+let value_id = function
+  | Build b -> "build:" ^ b.name
+  | Src s -> "src:" ^ Eio.Path.native_exn s.path
+  | Obj s -> "obj:" ^ Eio.Path.native_exn s.path
+  | Output s -> "out:" ^ Eio.Path.native_exn s
+
+type cmd = Script of string | Compiler of Compiler.t * Flags.t option
+
+let cmd_id = function
+  | Script b -> "script:" ^ (Digest.string b |> Digest.to_hex)
+  | Compiler (c, Some f) ->
+      "compiler:"
+      ^ String.concat "_" c.command
+      ^ String.concat "_" f.Flags.compile
+      ^ String.concat "_" f.Flags.link
+  | Compiler (c, None) -> "compiler:" ^ String.concat "_" c.command
+
+module Make = Graph.Imperative.Digraph.ConcreteLabeled (struct
+  type t = value
+
+  let compare a b = String.compare (value_id a) (value_id b)
+  let hash t = Hashtbl.hash (value_id t)
+  let equal a b = compare a b = 0
+end)
+
+module G = Make (struct
+  type t = cmd option
+
+  let default = None
+
+  let compare a b =
+    Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
+end)
+
+module Plan = struct
+  type t = { graph : G.t }
+
+  let v () = { graph = G.create () }
+
+  let build t (b : Build.t) =
+    Build.detect b;
+    let build_node = Build b in
+    let output_node = Option.map (fun x -> Output x) b.output in
+    G.add_vertex t.graph build_node;
+    Option.iter (G.add_vertex t.graph) output_node;
+    List.iter
+      (fun src ->
+        let src_node = Src src in
+        G.add_vertex t.graph src_node;
+        let e =
+          match b.script with Some s -> Some (Script s) | None -> None
+        in
+        let obj_node =
+          Obj (Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") src)
+        in
+        G.add_edge_e t.graph @@ G.E.create build_node e src_node;
+        let ext = Source_file.ext src in
+        let compiler =
+          Compiler_set.find_first
+            (fun c -> String_set.mem ext c.Compiler.ext)
+            b.compilers
+        in
+        G.add_edge_e t.graph
+        @@ G.E.create src_node
+             (Some
+                (Compiler
+                   ( compiler,
+                     Some
+                       (Flags.concat
+                          (Hashtbl.find_opt b.compiler_flags ext
+                          |> Option.value ~default:(Flags.v ()))
+                          b.flags) )))
+             obj_node;
+        Option.iter
+          (fun node -> G.add_edge_e t.graph @@ G.E.create obj_node e node)
+          output_node)
+      b.source_files
+
+  let walk t =
+    G.iter_vertex
+      (function
+        | Build b as v ->
+            print_endline ("Build " ^ b.name);
+            G.iter_succ_e
+              (fun edge ->
+                match G.E.dst edge with
+                | Src s as v' ->
+                    print_endline ("\tPath " ^ Eio.Path.native_exn s.path);
+                    G.iter_succ_e
+                      (fun edge' ->
+                        match G.E.dst edge' with
+                        | Obj s ->
+                            print_endline ("\tObj " ^ Eio.Path.native_exn s.path)
+                        | _ -> ())
+                      t.graph v'
+                | _ -> ())
+              t.graph v
+        | _ -> ())
+      t.graph
+
+  let run_build t (b : Build.t) =
+    print_endline ("Build " ^ b.name);
+    let link_flags = ref b.flags in
+    let objs =
+      G.fold_succ_e
+        (fun edge (objs : Object_file.t list) ->
+          Eio.Switch.run @@ fun sw ->
+          match G.E.dst edge with
+          | Src s as v' -> (
+              print_endline ("\tPath " ^ Eio.Path.native_exn s.path);
+              let obj =
+                Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") s
+              in
+              let obj_node = Obj obj in
+              match G.find_edge t.graph v' obj_node |> G.E.label with
+              | None -> objs
+              | Some edge' -> (
+                  match edge' with
+                  | Compiler (c, flags) ->
+                      let flags = Option.value ~default:(Flags.v ()) flags in
+                      Option.iter Eio.Process.await_exn
+                      @@ Compiler.compile_obj c b.env#process_mgr ~output:obj
+                           ~sw (Flags.concat b.flags flags).compile;
+                      let () = link_flags := Flags.concat !link_flags flags in
+                      print_endline ("\tObj " ^ Eio.Path.native_exn s.path);
+                      obj :: objs
+                  | _ -> objs))
+          | _ -> objs)
+        t.graph (Build b) []
+    in
+    Option.iter
+      (fun output ->
+        if not (List.is_empty b.source_files) then
+          log "⁕ LINK %s" (Eio.Path.native_exn output);
+        Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link)
+      b.output
+
+  let run_all t =
+    G.iter_vertex (function Build b -> run_build t b | _ -> ()) t.graph
+end
+
 module Config = struct
   module Compiler_config = struct
     type t = {
