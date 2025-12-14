@@ -166,6 +166,7 @@ module Build = struct
     script : string option;
     after : string option;
     name : string;
+    mutable depends : String_set.t;
     mutable disable_cache : bool;
     mutable output : path option;
     mutable detect_files : String_set.t;
@@ -180,7 +181,7 @@ module Build = struct
 
   let v ?build ?script ?after ?flags ?(linker = Compiler.cc) ?compilers
       ?(compiler_flags = []) ?detect ?(ignore = []) ?(disable_cache = false)
-      ?output ~source ~name env =
+      ?output ?(depends = []) ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -220,6 +221,7 @@ module Build = struct
       name;
       compiler_flags;
       disable_cache;
+      depends = String_set.of_list depends;
     }
 
   let detect_source_files t =
@@ -363,10 +365,17 @@ let value_id = function
   | Obj s -> "obj:" ^ Eio.Path.native_exn s.path
   | Output s -> "out:" ^ Eio.Path.native_exn s
 
-type cmd = Script of string | Compiler of Compiler.t * Flags.t option
+type cmd =
+  | Script of string * path option
+  | Compiler of Compiler.t * Flags.t option
 
 let cmd_id = function
-  | Script b -> "script:" ^ (Digest.string b |> Digest.to_hex)
+  | Script (b, output) ->
+      "script:"
+      ^ (Digest.string
+           ((Option.map Eio.Path.native_exn output |> Option.value ~default:"")
+           ^ b)
+        |> Digest.to_hex)
   | Compiler (c, Some f) ->
       "compiler:"
       ^ String.concat "_" c.command
@@ -407,7 +416,12 @@ module Plan = struct
         let src_node = Src src in
         G.add_vertex t.graph src_node;
         let e =
-          match b.script with Some s -> Some (Script s) | None -> None
+          match b.script with
+          | Some s ->
+              Some
+                (Script
+                   (s, if List.is_empty b.source_files then b.output else None))
+          | None -> None
         in
         let obj_node =
           Obj (Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") src)
@@ -446,6 +460,8 @@ module Plan = struct
       b.script;
     Build.detect b;
     let link_flags = ref b.flags in
+    let max = Domain.recommended_domain_count () in
+    let pool = Eio.Semaphore.make max in
     let objs =
       G.fold_succ_e
         (fun edge (objs : Object_file.t list) ->
@@ -462,9 +478,20 @@ module Plan = struct
                   match edge' with
                   | Compiler (c, flags) ->
                       let flags = Option.value ~default:(Flags.v ()) flags in
-                      Option.iter Eio.Process.await_exn
-                      @@ Compiler.compile_obj c b.env#process_mgr ~output:obj
-                           ~sw (Flags.concat b.flags flags).compile;
+                      (* TODO: parallel compilation *)
+                      Eio.Semaphore.acquire pool;
+                      Fun.protect ~finally:(fun () ->
+                          Eio.Semaphore.release pool)
+                      @@ fun () ->
+                      let task =
+                        Compiler.compile_obj c b.env#process_mgr ~output:obj ~sw
+                          (Flags.concat b.flags flags).compile
+                      in
+                      Option.iter
+                        (fun task ->
+                          if Eio.Semaphore.get_value pool >= max then
+                            Eio.Process.await_exn task)
+                        task;
                       let () = link_flags := Flags.concat !link_flags flags in
                       obj :: objs
                   | _ -> objs))
