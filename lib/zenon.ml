@@ -274,83 +274,6 @@ module Build = struct
   let add_source_files t files = t.source_files <- t.source_files @ files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
   let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)
-
-  let run t =
-    let objs = ref [] in
-    let pool = Eio.Semaphore.make (Domain.recommended_domain_count ()) in
-    log "◎ RUN %s" t.name;
-    let link_flags = ref t.flags in
-    let visited = ref Path_set.empty in
-    let () =
-      Option.iter
-        (fun s ->
-          log "• SCRIPT %s" s;
-          match Sys.command s with
-          | 0 -> ()
-          | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
-        t.script
-    in
-    detect t;
-    let tasks =
-      List.filter_map
-        (fun source ->
-          if
-            (not t.disable_cache)
-            && (Path_set.mem source.Source_file.path !visited
-               || Path_set.mem source.path t.ignore)
-          then None
-          else
-            let obj =
-              Object_file.of_source ~build_dir:Eio.Path.(t.build / "obj") source
-            in
-            let compiler =
-              Hashtbl.find_opt t.compiler_index (Source_file.ext source)
-            in
-            let () = link_flags := Flags.concat !link_flags source.flags in
-            match compiler with
-            | None ->
-                let source_name = Eio.Path.native_exn source.Source_file.path in
-                log "ERROR: no compiler found for %s" source_name;
-                failwith ("no compiler found for " ^ source_name)
-            | Some c ->
-                objs := obj :: !objs;
-                Option.some @@ Eio.Switch.run
-                @@ fun sw ->
-                Eio.Fiber.fork_promise ~sw @@ fun () ->
-                Eio.Semaphore.acquire pool;
-                Fun.protect ~finally:(fun () -> Eio.Semaphore.release pool)
-                @@ fun () ->
-                Eio.Switch.run @@ fun sw ->
-                let flags =
-                  Hashtbl.find_opt t.compiler_flags (Source_file.ext source)
-                  |> Option.value ~default:(Flags.v ())
-                in
-                let flags = Flags.concat source.flags flags in
-                let () = link_flags := Flags.concat !link_flags flags in
-                let res =
-                  Compiler.compile_obj c t.env#process_mgr ~output:obj ~sw
-                    (Flags.concat t.flags flags).compile
-                in
-                visited := Path_set.add source.path !visited;
-                Option.iter Eio.Process.await_exn res)
-        t.source_files
-    in
-    List.iter (fun task -> Eio.Promise.await_exn task) tasks;
-    let () =
-      Option.iter
-        (fun s ->
-          log "• SCRIPT %s" s;
-          match Sys.command s with
-          | 0 -> ()
-          | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
-        t.after
-    in
-    Option.iter
-      (fun output ->
-        if not (List.is_empty t.source_files) then
-          log "⁕ LINK %s" (Eio.Path.native_exn output);
-        Compiler.link t.linker t.env#process_mgr !objs ~output !link_flags.link)
-      t.output
 end
 
 type value =
@@ -455,10 +378,9 @@ module Plan = struct
       (fun s ->
         log "• SCRIPT %s" s;
         match Sys.command s with
-        | 0 -> ()
+        | 0 -> Build.detect b
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
       b.script;
-    Build.detect b;
     let link_flags = ref b.flags in
     let max = Domain.recommended_domain_count () in
     let pool = Eio.Semaphore.make max in
