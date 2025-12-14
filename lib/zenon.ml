@@ -169,8 +169,7 @@ module Build = struct
     mutable depends : String_set.t;
     mutable disable_cache : bool;
     mutable output : path option;
-    mutable detect_files : String_set.t;
-    mutable source_files : Source_file.t list;
+    mutable files : Re.t list;
     mutable flags : Flags.t;
     mutable compiler_flags : (string, Flags.t) Hashtbl.t;
   }
@@ -180,8 +179,8 @@ module Build = struct
   let obj_path t = Eio.Path.(t.build / "obj")
 
   let v ?build ?script ?after ?flags ?(linker = Compiler.cc) ?compilers
-      ?(compiler_flags = []) ?detect ?(ignore = []) ?(disable_cache = false)
-      ?output ?(depends = []) ~source ~name env =
+      ?(compiler_flags = []) ?(files = []) ?(ignore = [])
+      ?(disable_cache = false) ?output ?(depends = []) ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
@@ -191,9 +190,6 @@ module Build = struct
       match build with
       | None -> Eio.Path.(env#cwd / "zenon-build")
       | Some path -> path
-    in
-    let detect_files =
-      String_set.of_list @@ Option.value ~default:[ "c" ] detect
     in
     Eio.Path.mkdirs ~exists_ok:true build ~perm:0o755;
     let compiler_flags = Hashtbl.of_seq (List.to_seq compiler_flags) in
@@ -211,10 +207,14 @@ module Build = struct
       compiler_index;
       compilers;
       linker;
-      detect_files;
+      files =
+        List.map
+          (fun x ->
+            Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
+              (Filename.concat "**" x))
+          files;
       script;
       after;
-      source_files = [];
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
       ignore = Path_set.of_list ignore;
@@ -224,30 +224,19 @@ module Build = struct
       depends = String_set.of_list depends;
     }
 
-  let detect_source_files t =
-    let ext' = t.detect_files in
-    let known =
-      ref
-        (Path_set.of_list
-           (List.map (fun x -> x.Source_file.path) t.source_files))
-    in
+  let detect_source_files t : Source_file.t list =
+    let re = Re.alt t.files |> Re.compile in
     let rec inner path =
       let files = Eio.Path.read_dir path in
-      let files =
-        List.filter_map
-          (fun file ->
-            let f = Eio.Path.(path / file) in
-            if Path_set.mem f !known then None
-            else if Eio.Path.is_directory f then
-              let () = if not (String.equal file "zenon-build") then inner f in
-              None
-            else if String_set.mem (Util.ext f) ext' then
-              Some (Source_file.v ~root:t.source f)
-            else None)
-          files
-      in
-      List.iter (fun f -> known := Path_set.add f.Source_file.path !known) files;
-      t.source_files <- t.source_files @ files
+      List.fold_left
+        (fun (acc : Source_file.t list) file ->
+          let f = Eio.Path.(path / file) in
+          if Eio.Path.is_directory f then
+            if not (String.equal file "zenon-build") then inner f @ acc else acc
+          else if Re.execp re (Eio.Path.native_exn f) then
+            Source_file.v ~root:t.source f :: acc
+          else acc)
+        [] files
     in
     inner t.source
 
@@ -262,16 +251,15 @@ module Build = struct
     else if Eio.Path.is_file Eio.Path.(t.env#cwd / "compile_flags.txt") then
       parse_compile_flags t Eio.Path.(t.env#cwd / "compile_flags.txt")
 
-  let detect t =
-    detect_source_files t;
-    detect_flags_from_compile_flags t
+  let add_source_file t path =
+    t.files <-
+      t.files
+      @ [
+          Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
+            (Filename.concat "**" path);
+        ]
 
-  let add_source_file t ?flags path =
-    let path = Eio.Path.(t.source / path) in
-    t.source_files <-
-      t.source_files @ [ Source_file.v ?flags ~root:t.source path ]
-
-  let add_source_files t files = t.source_files <- t.source_files @ files
+  let add_source_files t files = List.iter (fun f -> add_source_file t f) files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
   let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)
 end
@@ -329,7 +317,7 @@ module Plan = struct
   let v () = { graph = G.create () }
 
   let build t (b : Build.t) =
-    Build.detect b;
+    let source_files = Build.detect_source_files b in
     let build_node = Build b in
     let output_node = Option.map (fun x -> Output x) b.output in
     G.add_vertex t.graph build_node;
@@ -343,7 +331,7 @@ module Plan = struct
           | Some s ->
               Some
                 (Script
-                   (s, if List.is_empty b.source_files then b.output else None))
+                   (s, if List.is_empty source_files then b.output else None))
           | None -> None
         in
         let obj_node =
@@ -370,7 +358,7 @@ module Plan = struct
         Option.iter
           (fun node -> G.add_edge_e t.graph @@ G.E.create obj_node e node)
           output_node)
-      b.source_files
+      source_files
 
   let run_build t (b : Build.t) =
     log "◎ RUN %s" b.name;
@@ -378,12 +366,13 @@ module Plan = struct
       (fun s ->
         log "• SCRIPT %s" s;
         match Sys.command s with
-        | 0 -> Build.detect b
+        | 0 -> (*Build.detect b*) ()
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
       b.script;
     let link_flags = ref b.flags in
     let max = Domain.recommended_domain_count () in
     let pool = Eio.Semaphore.make max in
+    let count = ref 0 in
     let objs =
       G.fold_succ_e
         (fun edge objs ->
@@ -399,6 +388,7 @@ module Plan = struct
               | Some edge' -> (
                   match edge' with
                   | Compiler (c, flags) ->
+                      incr count;
                       let flags = Option.value ~default:(Flags.v ()) flags in
                       Eio.Semaphore.acquire pool;
                       ( Eio.Fiber.fork ~sw @@ fun () ->
@@ -418,9 +408,9 @@ module Plan = struct
     in
     Option.iter
       (fun output ->
-        if not (List.is_empty b.source_files) then
+        if !count > 0 then (
           log "⁕ LINK %s" (Eio.Path.native_exn output);
-        Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link)
+          Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link))
       b.output;
     Option.iter
       (fun s ->
@@ -493,8 +483,7 @@ module Config = struct
       output : string option; [@default None]
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
-      files : string list; [@default []]
-      detect : string list; [@default []]
+      files : string list; [@default [ "*.c" ]]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
       after : string option; [@default None]
@@ -509,8 +498,7 @@ module Config = struct
         path = None;
         compilers = [ Compiler_config.c ];
         linker = Compiler_config.c;
-        files = [];
-        detect = [ "c" ];
+        files = [ "*.c" ];
         script = None;
         after = None;
         flags = [];
@@ -567,13 +555,10 @@ module Config = struct
         in
         let build =
           Build.v ?script:config.script ?after:config.after ~linker ~compilers
-            ~compiler_flags ?output ~source ~detect:config.detect
+            ~compiler_flags ?output ~source ~files:config.files
             ~name:config.name env
         in
-        Build.add_source_files build
-          (List.map
-             (fun file -> Source_file.v ~root:source Eio.Path.(source / file))
-             config.files);
+        Build.add_source_files build config.files;
         build)
       t.build
 
