@@ -464,7 +464,7 @@ module Plan = struct
     let pool = Eio.Semaphore.make max in
     let objs =
       G.fold_succ_e
-        (fun edge (objs : Object_file.t list) ->
+        (fun edge objs ->
           Eio.Switch.run @@ fun sw ->
           match G.E.dst edge with
           | Src s as v' -> (
@@ -478,21 +478,17 @@ module Plan = struct
                   match edge' with
                   | Compiler (c, flags) ->
                       let flags = Option.value ~default:(Flags.v ()) flags in
-                      (* TODO: parallel compilation *)
                       Eio.Semaphore.acquire pool;
-                      Fun.protect ~finally:(fun () ->
-                          Eio.Semaphore.release pool)
-                      @@ fun () ->
-                      let task =
-                        Compiler.compile_obj c b.env#process_mgr ~output:obj ~sw
-                          (Flags.concat b.flags flags).compile
-                      in
-                      Option.iter
-                        (fun task ->
-                          if Eio.Semaphore.get_value pool >= max then
-                            Eio.Process.await_exn task)
-                        task;
-                      let () = link_flags := Flags.concat !link_flags flags in
+                      ( Eio.Fiber.fork ~sw @@ fun () ->
+                        Fun.protect ~finally:(fun () ->
+                            Eio.Semaphore.release pool)
+                        @@ fun () ->
+                        let task =
+                          Compiler.compile_obj c b.env#process_mgr ~output:obj
+                            ~sw (Flags.concat b.flags flags).compile
+                        in
+                        let () = link_flags := Flags.concat !link_flags flags in
+                        Option.iter Eio.Process.await_exn task );
                       obj :: objs
                   | _ -> objs))
           | _ -> objs)
@@ -512,8 +508,7 @@ module Plan = struct
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
       b.after
 
-  let run_all t =
-    G.iter_vertex (function Build b -> run_build t b | _ -> ()) t.graph
+  let run_all t builds = List.iter (run_build t) builds
 end
 
 module Config = struct

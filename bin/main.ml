@@ -74,7 +74,7 @@ let build2 ?output ~cflags ~ldflags ~path ~builds () =
           Zenon.Plan.build plan build)
       x
   in
-  Zenon.Plan.run_all plan
+  Zenon.Plan.run_all plan x
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
