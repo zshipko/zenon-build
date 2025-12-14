@@ -224,7 +224,7 @@ module Build = struct
       depends = String_set.of_list depends;
     }
 
-  let detect_source_files t : Source_file.t list =
+  let locate_source_files t : Source_file.t list =
     let re = Re.alt t.files |> Re.compile in
     let rec inner path =
       let files = Eio.Path.read_dir path in
@@ -245,7 +245,7 @@ module Build = struct
     let lines = Seq.map String.trim lines |> List.of_seq in
     add_compile_flags t lines
 
-  let detect_flags_from_compile_flags t =
+  let flags_from_compile_flags t =
     let f = Eio.Path.(t.source / "compile_flags.txt") in
     if Eio.Path.is_file f then parse_compile_flags t f
     else if Eio.Path.is_file Eio.Path.(t.env#cwd / "compile_flags.txt") then
@@ -317,7 +317,7 @@ module Plan = struct
   let v () = { graph = G.create () }
 
   let build t (b : Build.t) =
-    let source_files = Build.detect_source_files b in
+    let source_files = Build.locate_source_files b in
     let build_node = Build b in
     let output_node = Option.map (fun x -> Output x) b.output in
     G.add_vertex t.graph build_node;
