@@ -47,7 +47,8 @@ let build ?output ~cflags ~ldflags ~path ~builds () =
       Zenon.Build.run build)
     x
 
-let build2 ?output:_ ~cflags:_ ~ldflags:_ ~path ~builds:_ () =
+let build2 ?output ~cflags ~ldflags ~path ~builds () =
+  let builds = Zenon.String_set.of_list builds in
   Eio_posix.run @@ fun env ->
   let x =
     match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
@@ -55,7 +56,24 @@ let build2 ?output:_ ~cflags:_ ~ldflags:_ ~path ~builds:_ () =
     | Error (`Msg err) -> failwith err
   in
   let plan = Zenon.Plan.v () in
-  let () = List.iter (Zenon.Plan.build plan) x in
+  let () =
+    List.iter
+      (fun build ->
+        if
+          Zenon.String_set.is_empty builds
+          || Zenon.String_set.mem build.Zenon.Build.name builds
+        then
+          let () =
+            match output with
+            | None -> ()
+            | Some output ->
+                build.Zenon.Build.output <- Some Eio.Path.(env#cwd / output)
+          in
+          let () = Zenon.Build.add_compile_flags build cflags in
+          let () = Zenon.Build.add_link_flags build ldflags in
+          Zenon.Plan.build plan build)
+      x
+  in
   Zenon.Plan.run_all plan
 
 let clean ~path ~builds () =

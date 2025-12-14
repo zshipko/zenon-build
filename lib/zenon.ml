@@ -435,30 +435,16 @@ module Plan = struct
           output_node)
       b.source_files
 
-  let walk t =
-    G.iter_vertex
-      (function
-        | Build b as v ->
-            print_endline ("Build " ^ b.name);
-            G.iter_succ_e
-              (fun edge ->
-                match G.E.dst edge with
-                | Src s as v' ->
-                    print_endline ("\tPath " ^ Eio.Path.native_exn s.path);
-                    G.iter_succ_e
-                      (fun edge' ->
-                        match G.E.dst edge' with
-                        | Obj s ->
-                            print_endline ("\tObj " ^ Eio.Path.native_exn s.path)
-                        | _ -> ())
-                      t.graph v'
-                | _ -> ())
-              t.graph v
-        | _ -> ())
-      t.graph
-
   let run_build t (b : Build.t) =
-    print_endline ("Build " ^ b.name);
+    log "◎ RUN %s" b.name;
+    Option.iter
+      (fun s ->
+        log "• SCRIPT %s" s;
+        match Sys.command s with
+        | 0 -> ()
+        | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+      b.script;
+    Build.detect b;
     let link_flags = ref b.flags in
     let objs =
       G.fold_succ_e
@@ -466,7 +452,6 @@ module Plan = struct
           Eio.Switch.run @@ fun sw ->
           match G.E.dst edge with
           | Src s as v' -> (
-              print_endline ("\tPath " ^ Eio.Path.native_exn s.path);
               let obj =
                 Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") s
               in
@@ -481,7 +466,6 @@ module Plan = struct
                       @@ Compiler.compile_obj c b.env#process_mgr ~output:obj
                            ~sw (Flags.concat b.flags flags).compile;
                       let () = link_flags := Flags.concat !link_flags flags in
-                      print_endline ("\tObj " ^ Eio.Path.native_exn s.path);
                       obj :: objs
                   | _ -> objs))
           | _ -> objs)
@@ -492,7 +476,14 @@ module Plan = struct
         if not (List.is_empty b.source_files) then
           log "⁕ LINK %s" (Eio.Path.native_exn output);
         Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link)
-      b.output
+      b.output;
+    Option.iter
+      (fun s ->
+        log "• SCRIPT %s" s;
+        match Sys.command s with
+        | 0 -> ()
+        | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+      b.after
 
   let run_all t =
     G.iter_vertex (function Build b -> run_build t b | _ -> ()) t.graph
