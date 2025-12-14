@@ -5,22 +5,21 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (codeberg zshipko/zenon))
 
-(authors "Author Name <author@example.com>")
+(authors "Zach Shipko <zachshipko@gmail.com>")
 
-(maintainers "Maintainer Name <maintainer@example.com>")
+(maintainers "Zach Shipko <zachshipko@gmail.com>")
 
-(license LICENSE)
+(license ISC)
 
-(documentation https://url/to/documentation)
+(documentation https://codeberg.org/zshipko/zenon)
 
 (package
  (name zenon)
- (synopsis "A short synopsis")
- (description "A longer description")
- (depends ocaml)
- (tags
-  ("add topics" "to describe" your project)))
+ (synopsis "Zenon: C build tool of the 21st century")
+ (description "A 'smart' build tool for C-like languages")
+ (depends ocaml eio_posix yaml re ocamlgraph ppx_deriving_yaml)
+ (tags (build)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
