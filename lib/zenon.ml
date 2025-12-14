@@ -366,7 +366,7 @@ module Plan = struct
       (fun s ->
         log "• SCRIPT %s" s;
         match Sys.command s with
-        | 0 -> (*Build.detect b*) ()
+        | 0 -> ()
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
       b.script;
     let link_flags = ref b.flags in
@@ -400,7 +400,8 @@ module Plan = struct
                             ~sw (Flags.concat b.flags flags).compile
                         in
                         let () = link_flags := Flags.concat !link_flags flags in
-                        Option.iter Eio.Process.await_exn task );
+                        Option.iter Eio.Process.await_exn task
+                      (*reporter 5*) );
                       obj :: objs
                   | _ -> objs))
           | _ -> objs)

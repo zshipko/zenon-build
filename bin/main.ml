@@ -50,7 +50,8 @@ let build ?output ~cflags ~ldflags ~path ~builds () =
           Zenon.Plan.build plan build)
       x
   in
-  Zenon.Plan.run_all plan x
+  Zenon.Plan.run_all plan
+    (List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x)
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
