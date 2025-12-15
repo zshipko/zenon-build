@@ -37,6 +37,10 @@ module Util = struct
       let prefix_len = String.length prefix in
       String.sub a (prefix_len + 1) (String.length a - prefix_len - 1)
     else a
+
+  let glob =
+    Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
+      ~expand_braces:true
 end
 
 module Flags = struct
@@ -162,10 +166,10 @@ module Build = struct
     compiler_index : (string, Compiler.t) Hashtbl.t;
     compilers : Compiler_set.t;
     linker : Compiler.t;
-    ignore : Path_set.t;
     script : string option;
     after : string option;
     name : string;
+    mutable ignore : Re.t list;
     mutable depends : String_set.t;
     mutable disable_cache : bool;
     mutable output : path option;
@@ -207,17 +211,12 @@ module Build = struct
       compiler_index;
       compilers;
       linker;
-      files =
-        List.map
-          (fun x ->
-            Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
-              (Filename.concat "**" x))
-          files;
+      files = List.map (fun x -> Util.glob (Filename.concat "**" x)) files;
       script;
       after;
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
-      ignore = Path_set.of_list ignore;
+      ignore = List.map (fun x -> Util.glob (Filename.concat "**" x)) ignore;
       name;
       compiler_flags;
       disable_cache;
@@ -252,12 +251,7 @@ module Build = struct
       parse_compile_flags t Eio.Path.(t.env#cwd / "compile_flags.txt")
 
   let add_source_file t path =
-    t.files <-
-      t.files
-      @ [
-          Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
-            (Filename.concat "**" path);
-        ]
+    t.files <- t.files @ [ Util.glob (Filename.concat "**" path) ]
 
   let add_source_files t files = List.iter (fun f -> add_source_file t f) files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
@@ -322,42 +316,46 @@ module Plan = struct
     let output_node = Option.map (fun x -> Output x) b.output in
     G.add_vertex t.graph build_node;
     Option.iter (G.add_vertex t.graph) output_node;
+    let ignore = Re.compile (Re.alt b.ignore) in
     List.iter
       (fun src ->
-        let src_node = Src src in
-        G.add_vertex t.graph src_node;
-        let e =
-          match b.script with
-          | Some s ->
-              Some
-                (Script
-                   (s, if List.is_empty source_files then b.output else None))
-          | None -> None
-        in
-        let obj_node =
-          Obj (Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") src)
-        in
-        G.add_edge_e t.graph @@ G.E.create build_node e src_node;
-        let ext = Source_file.ext src in
-        let compiler =
-          Compiler_set.find_first
-            (fun c -> String_set.mem ext c.Compiler.ext)
-            b.compilers
-        in
-        G.add_edge_e t.graph
-        @@ G.E.create src_node
-             (Some
-                (Compiler
-                   ( compiler,
-                     Some
-                       (Flags.concat
-                          (Hashtbl.find_opt b.compiler_flags ext
-                          |> Option.value ~default:(Flags.v ()))
-                          b.flags) )))
-             obj_node;
-        Option.iter
-          (fun node -> G.add_edge_e t.graph @@ G.E.create obj_node e node)
-          output_node)
+        if Re.execp ignore (Eio.Path.native_exn src.Source_file.path) then ()
+        else
+          let src_node = Src src in
+          G.add_vertex t.graph src_node;
+          let e =
+            match b.script with
+            | Some s ->
+                Some
+                  (Script
+                     (s, if List.is_empty source_files then b.output else None))
+            | None -> None
+          in
+          let obj_node =
+            Obj
+              (Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") src)
+          in
+          G.add_edge_e t.graph @@ G.E.create build_node e src_node;
+          let ext = Source_file.ext src in
+          let compiler =
+            Compiler_set.find_first
+              (fun c -> String_set.mem ext c.Compiler.ext)
+              b.compilers
+          in
+          G.add_edge_e t.graph
+          @@ G.E.create src_node
+               (Some
+                  (Compiler
+                     ( compiler,
+                       Some
+                         (Flags.concat
+                            (Hashtbl.find_opt b.compiler_flags ext
+                            |> Option.value ~default:(Flags.v ()))
+                            b.flags) )))
+               obj_node;
+          Option.iter
+            (fun node -> G.add_edge_e t.graph @@ G.E.create obj_node e node)
+            output_node)
       source_files
 
   let run_build t (b : Build.t) =
@@ -485,6 +483,7 @@ module Config = struct
       compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
       linker : Compiler_config.t; [@default Compiler_config.c]
       files : string list; [@default [ "*.c" ]]
+      ignore : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
       after : string option; [@default None]
@@ -496,7 +495,8 @@ module Config = struct
       {
         name = "default";
         output = Some "a.out";
-        path = None;
+        path = Some ".";
+        ignore = [];
         compilers = [ Compiler_config.c ];
         linker = Compiler_config.c;
         files = [ "*.c" ];
@@ -557,7 +557,7 @@ module Config = struct
         let build =
           Build.v ?script:config.script ?after:config.after ~linker ~compilers
             ~compiler_flags ?output ~source ~files:config.files
-            ~name:config.name env
+            ~name:config.name ~ignore:config.ignore env
         in
         Build.add_source_files build config.files;
         build)

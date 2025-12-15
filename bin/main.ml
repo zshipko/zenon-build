@@ -23,13 +23,28 @@ let ldflag =
   let doc = "Linker flag" in
   Arg.(value & opt_all string [] & info [ "ldflag" ] ~doc ~docv:"FLAG")
 
-let build ?output ~cflags ~ldflags ~path ~builds () =
-  let builds = Zenon.String_set.of_list builds in
+let ignore =
+  let doc = "Ignore file" in
+  Arg.(value & opt_all string [] & info [ "ignore"; "i" ] ~doc ~docv:"FILE")
+
+let file =
+  let doc = "Add file" in
+  Arg.(value & opt_all string [] & info [ "file"; "f" ] ~doc ~docv:"FILE")
+
+let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
   Eio_posix.run @@ fun env ->
   let x =
     match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
     | Ok x -> x
     | Error (`Msg err) -> failwith err
+  in
+  let builds =
+    if
+      List.is_empty builds
+      && List.find_opt (fun x -> x.Zenon.Build.name = "default") x
+         |> Option.is_some
+    then Zenon.String_set.of_list [ "default" ]
+    else Zenon.String_set.of_list builds
   in
   let plan = Zenon.Plan.v () in
   let () =
@@ -47,6 +62,11 @@ let build ?output ~cflags ~ldflags ~path ~builds () =
           in
           let () = Zenon.Build.add_compile_flags build cflags in
           let () = Zenon.Build.add_link_flags build ldflags in
+          let () = Zenon.Build.add_source_files build file in
+          let () =
+            build.Zenon.Build.ignore <-
+              build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore
+          in
           Zenon.Plan.build plan build)
       x
   in
@@ -72,11 +92,13 @@ let cmd_build =
   Cmd.v (Cmd.info "build")
   @@
   let+ output = output
+  and+ file = file
+  and+ ignore = ignore
   and+ path = path
   and+ builds = builds
   and+ cflags = cflag
   and+ ldflags = ldflag in
-  build ?output ~cflags ~ldflags ~path ~builds ()
+  build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
