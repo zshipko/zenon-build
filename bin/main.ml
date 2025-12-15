@@ -38,14 +38,19 @@ let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
-  let builds =
-    if
-      List.is_empty builds
-      && List.find_opt (fun x -> x.Zenon.Build.name = "default") x
-         |> Option.is_some
-    then Zenon.String_set.of_list [ "default" ]
-    else Zenon.String_set.of_list builds
+  let builds, x =
+    match x with
+    | [] ->
+        ( [ "default" ],
+          [
+            Zenon.Build.v env ~ignore
+              ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
+              ~source:Eio.Path.(env#fs / path)
+              ~files:file ~name:"default";
+          ] )
+    | x -> (builds, x)
   in
+  let builds = Zenon.String_set.of_list builds in
   let plan = Zenon.Plan.v () in
   let () =
     List.iter

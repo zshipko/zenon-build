@@ -155,7 +155,7 @@ module Compiler_set = struct
       List.compare String.compare a.Compiler.command b.Compiler.command
   end)
 
-  let default = of_list Compiler.[ cc; cxx ]
+  let default = of_list Compiler.[ cc ]
 end
 
 module Build = struct
@@ -514,12 +514,7 @@ module Config = struct
   }
   [@@deriving yaml]
 
-  let default =
-    {
-      build = [ Build_config.default ];
-      flags = [];
-      compilers = [ Compiler_config.c ];
-    }
+  let empty = { build = []; flags = []; compilers = [] }
 
   let read_file path =
     try
@@ -532,7 +527,7 @@ module Config = struct
     if Eio.Path.is_file path then read_file path
     else if Eio.Path.is_directory path then
       read_file_or_default Eio.Path.(path / "zenon.yaml")
-    else Ok default
+    else Ok empty
 
   let init ~env path t =
     List.map
