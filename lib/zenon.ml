@@ -75,7 +75,12 @@ module Build = struct
         (fun (acc : Source_file.t list) file ->
           let f = Eio.Path.(path / file) in
           if Eio.Path.is_directory f then
-            if not (String.equal file "zenon-build") then inner f @ acc else acc
+            if
+              not
+                (String.equal file "zenon-build"
+                || String.equal file ".git" || String.equal file ".jj")
+            then inner f @ acc
+            else acc
           else if Re.execp re (Eio.Path.native_exn f) then
             Source_file.v ~root:t.source f :: acc
           else acc)
@@ -157,6 +162,10 @@ module Plan = struct
   let v () = { graph = G.create () }
 
   let build t (b : Build.t) =
+    let () =
+      if List.is_empty b.files && Option.is_none b.script then
+        Build.add_source_file b "*.c"
+    in
     let source_files = Build.locate_source_files b in
     let build_node = Build b in
     let output_node = Option.map (fun x -> Output x) b.output in
