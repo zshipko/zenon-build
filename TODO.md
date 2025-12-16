@@ -1,0 +1,1 @@
+- Allow `ghc`/`ocamlopt` to compile multiple files
