@@ -29,7 +29,8 @@ let ignore =
 
 let file =
   let doc = "Add file" in
-  Arg.(value & opt_all string [] & info [ "file"; "f" ] ~doc ~docv:"FILE")
+  Arg.(
+    value & opt_all string [ "*.c" ] & info [ "file"; "f" ] ~doc ~docv:"FILE")
 
 let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
   Eio_posix.run @@ fun env ->
@@ -49,6 +50,10 @@ let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
               ~files:file ~name:"default";
           ] )
     | x -> (builds, x)
+  in
+  let builds =
+    if List.is_empty builds then List.map (fun x -> x.Zenon.Build.name) x
+    else builds
   in
   let builds = Zenon.String_set.of_list builds in
   let plan = Zenon.Plan.v () in
