@@ -1,49 +1,5 @@
-type path = Eio.Fs.dir_ty Eio.Path.t
-
-module String_set = Set.Make (String)
-
-module Path_set = Set.Make (struct
-  type t = path
-
-  let compare a b =
-    let a = Eio.Path.native_exn a in
-    let b = Eio.Path.native_exn b in
-    String.compare a b
-end)
-
-let log fmt = Fmt.epr (fmt ^^ "\n%!")
-
-module Util = struct
-  let ext path =
-    let s =
-      Eio.Path.split path |> Option.map snd |> Option.value ~default:""
-      |> Filename.extension
-    in
-    if String.length s > 0 then String.sub s 1 (String.length s - 1) else ""
-
-  let with_ext path ext =
-    let a, b = Eio.Path.split path |> Option.get in
-    let c = Filename.remove_extension b ^ "." ^ ext in
-    Eio.Path.(a / c)
-
-  let mkparent path =
-    let parent = Eio.Path.split path |> Option.map fst in
-    Option.iter (Eio.Path.mkdirs ~exists_ok:true ~perm:0o755) parent
-
-  let relative_to base a =
-    let prefix = Eio.Path.native_exn base in
-    let a = Eio.Path.native_exn a in
-    if String.starts_with ~prefix a then
-      let prefix_len = String.length prefix in
-      String.sub a (prefix_len + 1) (String.length a - prefix_len - 1)
-    else a
-
-  let glob =
-    Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
-      ~expand_braces:true
-
-  let glob_path path = glob (Filename.concat "**" path)
-end
+include Types
+module Util = Util
 
 module Flags = struct
   type t = { mutable compile : string list; mutable link : string list }
@@ -136,12 +92,12 @@ module Compiler = struct
     in
     match st with
     | Some (obj, src) when obj.mtime > src.mtime ->
-        log "• CACHE %s (%s)"
+        Util.log "• CACHE %s (%s)"
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
         None
     | _ ->
-        log "• BUILD %s -> %s"
+        Util.log "• BUILD %s -> %s"
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
@@ -410,10 +366,10 @@ module Plan = struct
       source_files
 
   let run_build t (b : Build.t) =
-    log "◎ RUN %s" b.name;
+    Util.log "◎ RUN %s" b.name;
     Option.iter
       (fun s ->
-        log "• SCRIPT %s" s;
+        Util.log "• SCRIPT %s" s;
         match Sys.command s with
         | 0 -> ()
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
@@ -458,13 +414,13 @@ module Plan = struct
     Option.iter
       (fun output ->
         if !count > 0 then (
-          log "⁕ LINK %s" (Eio.Path.native_exn output);
+          Util.log "⁕ LINK %s" (Eio.Path.native_exn output);
           Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link
             ~compiler_index:b.compiler_index))
       b.output;
     Option.iter
       (fun s ->
-        log "• SCRIPT %s" s;
+        Util.log "• SCRIPT %s" s;
         match Sys.command s with
         | 0 -> ()
         | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
@@ -564,7 +520,7 @@ module Config = struct
       output : string option; [@default None]
       compilers : Compiler_config.t list; [@default default_compilers]
       linker : Compiler_config.t; [@default Compiler_config.clang]
-      files : string list; [@default [ "*.c" ]]
+      files : string list; [@default []]
       ignore : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
@@ -581,7 +537,7 @@ module Config = struct
         ignore = [];
         compilers = default_compilers;
         linker = Compiler_config.clang;
-        files = [ "*.c" ];
+        files = [];
         script = None;
         after = None;
         flags = [];
