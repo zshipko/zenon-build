@@ -69,9 +69,11 @@ module Object_file = struct
 
   let of_source ?flags ~build_dir source =
     let obj_file = Util.with_ext source.Source_file.path "o" in
-    let obj_file =
-      Eio.Path.(build_dir / Util.relative_to source.root obj_file)
+    let p =
+      Eio.Path.split source.root |> Option.map fst
+      |> Option.value ~default:source.root
     in
+    let obj_file = Eio.Path.(build_dir / Util.relative_to p obj_file) in
     v ?flags ~source @@ obj_file
 end
 
@@ -83,7 +85,7 @@ module Compiler = struct
     obj_flag : string;
   }
 
-  let cc =
+  let clang =
     {
       command = [ "clang" ];
       out_flag = "-o";
@@ -91,20 +93,25 @@ module Compiler = struct
       ext = String_set.of_list [ "c" ];
     }
 
-  let cxx =
+  let clangxx =
     {
-      cc with
+      clang with
       command = [ "clang++" ];
       ext = String_set.of_list [ "cc"; "cpp" ];
     }
 
-  let zig_cc =
+  let zig_cc = { clang with command = [ "zig"; "cc" ] }
+
+  let ispc =
     {
-      command = [ "zig"; "cc" ];
-      out_flag = "-o";
-      obj_flag = "-c";
-      ext = String_set.of_list [ "c" ];
+      clang with
+      command = [ "ispc" ];
+      obj_flag = "--emit-obj";
+      ext = String_set.of_list [ "ispc" ];
     }
+
+  let ghc =
+    { clang with command = [ "ghc" ]; ext = String_set.of_list [ "hs"; "lhs" ] }
 
   let compile_obj t mgr ~sw ~output args =
     let st =
@@ -151,11 +158,13 @@ module Compiler_set = struct
   include Set.Make (struct
     type t = Compiler.t
 
-    let compare a b =
-      List.compare String.compare a.Compiler.command b.Compiler.command
+    let compare a b = String_set.compare a.Compiler.ext b.Compiler.ext
   end)
 
-  let default = of_list Compiler.[ cc ]
+  let default = of_list Compiler.[ clang; ghc; ispc ]
+
+  let default_ext =
+    fold (fun x -> String_set.union x.ext) default String_set.empty
 end
 
 module Build = struct
@@ -182,13 +191,15 @@ module Build = struct
   let add_link_flags t = Flags.add_link_flags t.flags
   let obj_path t = Eio.Path.(t.build / "obj")
 
-  let v ?build ?script ?after ?flags ?(linker = Compiler.cc) ?compilers
+  let v ?build ?script ?after ?flags ?(linker = Compiler.clang) ?compilers
       ?(compiler_flags = []) ?(files = []) ?(ignore = [])
       ?(disable_cache = false) ?output ?(depends = []) ~source ~name env =
     let compilers =
       match compilers with
       | None -> Compiler_set.default
-      | Some compilers -> Compiler_set.of_list compilers
+      | Some compilers ->
+          Compiler_set.union Compiler_set.default
+          @@ Compiler_set.of_list compilers
     in
     let build =
       match build with
@@ -284,9 +295,13 @@ let cmd_id = function
   | Compiler (c, Some f) ->
       "compiler:"
       ^ String.concat "_" c.command
+      ^ String.concat "_" (String_set.to_list c.ext)
       ^ String.concat "_" f.Flags.compile
       ^ String.concat "_" f.Flags.link
-  | Compiler (c, None) -> "compiler:" ^ String.concat "_" c.command
+  | Compiler (c, None) ->
+      "compiler:"
+      ^ String.concat "_" c.command
+      ^ String.concat "_" (String_set.to_list c.ext)
 
 module Make = Graph.Imperative.Digraph.ConcreteLabeled (struct
   type t = value
@@ -338,9 +353,23 @@ module Plan = struct
           G.add_edge_e t.graph @@ G.E.create build_node e src_node;
           let ext = Source_file.ext src in
           let compiler =
-            Compiler_set.find_first
-              (fun c -> String_set.mem ext c.Compiler.ext)
-              b.compilers
+            match Hashtbl.find_opt b.compiler_index ext with
+            | Some x -> x
+            | None ->
+                Fmt.failwith
+                  "failed to pick compiler for extension %s in compilers: %a \
+                   with extensions %a"
+                  ext
+                  (Fmt.list
+                     ~sep:(Fmt.const Fmt.string ", ")
+                     (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string))
+                  (Compiler_set.to_list b.compilers
+                  |> List.map (fun c -> c.Compiler.command))
+                  (Fmt.list
+                     ~sep:(Fmt.const Fmt.string ", ")
+                     (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string))
+                  (Compiler_set.to_list b.compilers
+                  |> List.map (fun c -> String_set.to_list c.Compiler.ext))
           in
           G.add_edge_e t.graph
           @@ G.E.create src_node
@@ -436,19 +465,31 @@ module Config = struct
     let default =
       { name = None; command = []; ext = []; out_flag = "-o"; obj_flag = "-c" }
 
-    let c = { default with name = Some "c" }
-    let cxx = { default with name = Some "cpp" }
+    let clang = { default with name = Some "clang" }
+    let ispc = { default with name = Some "ispc" }
+    let clangxx = { default with name = Some "clang++" }
+    let ghc = { default with name = Some "ghc" }
 
     let find_compiler = function
-      | "c" -> Some Compiler.cc
-      | "cc" | "cpp" -> Some Compiler.cxx
+      | "c" | "clang" -> Some Compiler.clang
+      | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
+      | "ispc" -> Some Compiler.ispc
+      | "hs" | "ghc" -> Some Compiler.ghc
       | _ -> None
 
-    let rec compiler t =
+    let rec compiler compilers t =
       match t.name with
       | Some name -> (
           match find_compiler name with
-          | None -> compiler { t with name = None }
+          | None -> (
+              match
+                List.find_opt
+                  (fun x -> Option.value ~default:"" x.name = name)
+                  compilers
+              with
+              | Some c when not (List.is_empty c.command) ->
+                  compiler compilers c
+              | _ -> compiler compilers { t with name = None })
           | Some x -> x)
       | None ->
           Compiler.
@@ -476,13 +517,19 @@ module Config = struct
       [@@deriving yaml]
     end
 
+    let default_compilers =
+      [ Compiler_config.clang; Compiler_config.ghc; Compiler_config.ispc ]
+
     type t = {
-      name : string;
-      path : string option; [@default None]
+      name : string option; [@default None]
+      path : string option;
       output : string option; [@default None]
-      compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
-      linker : Compiler_config.t; [@default Compiler_config.c]
-      files : string list; [@default [ "*.c" ]]
+      compilers : Compiler_config.t list; [@default default_compilers]
+      linker : Compiler_config.t; [@default Compiler_config.clang]
+      files : string list;
+          [@default
+            List.map (fun s -> "*." ^ s)
+            @@ String_set.to_list Compiler_set.default_ext]
       ignore : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
@@ -493,13 +540,15 @@ module Config = struct
 
     let default =
       {
-        name = "default";
+        name = None;
         output = Some "a.out";
         path = Some ".";
         ignore = [];
-        compilers = [ Compiler_config.c ];
-        linker = Compiler_config.c;
-        files = [ "*.c" ];
+        compilers = default_compilers;
+        linker = Compiler_config.clang;
+        files =
+          String_set.to_list
+            (String_set.map (fun x -> "*." ^ x) Compiler_set.default_ext);
         script = None;
         after = None;
         flags = [];
@@ -510,7 +559,7 @@ module Config = struct
   type t = {
     build : Build_config.t list;
     flags : Build_config.Lang_flags.t list; [@default []]
-    compilers : Compiler_config.t list; [@default [ Compiler_config.c ]]
+    compilers : Compiler_config.t list; [@default Build_config.default_compilers]
   }
   [@@deriving yaml]
 
@@ -532,9 +581,12 @@ module Config = struct
   let init ~env path t =
     List.map
       (fun config ->
-        let linker = Compiler_config.compiler config.Build_config.linker in
+        let linker =
+          Compiler_config.compiler t.compilers config.Build_config.linker
+        in
         let compilers =
-          List.map Compiler_config.compiler (t.compilers @ config.compilers)
+          List.map (Compiler_config.compiler []) t.compilers
+          @ List.map (Compiler_config.compiler t.compilers) config.compilers
         in
         let compiler_flags =
           List.to_seq (t.flags @ config.flags)
@@ -549,10 +601,15 @@ module Config = struct
         let output =
           Option.map (fun output -> Eio.Path.(source / output)) config.output
         in
+        let name =
+          match config.name with
+          | Some name -> name
+          | None -> ( match config.path with Some p -> p | None -> "default")
+        in
         let build =
           Build.v ?script:config.script ?after:config.after ~linker ~compilers
-            ~compiler_flags ?output ~source ~files:config.files
-            ~name:config.name ~ignore:config.ignore env
+            ~compiler_flags ?output ~source ~files:config.files ~name
+            ~ignore:config.ignore env
         in
         Build.add_source_files build config.files;
         build)

@@ -30,7 +30,11 @@ let ignore =
 let file =
   let doc = "Add file" in
   Arg.(
-    value & opt_all string [ "*.c" ] & info [ "file"; "f" ] ~doc ~docv:"FILE")
+    value
+    & (opt_all string
+      @@ Zenon.String_set.(
+           map (fun x -> "*." ^ x) Zenon.Compiler_set.default_ext |> to_list))
+    & info [ "file"; "f" ] ~doc ~docv:"FILE")
 
 let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
   Eio_posix.run @@ fun env ->
