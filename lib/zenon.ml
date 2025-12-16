@@ -41,6 +41,8 @@ module Util = struct
   let glob =
     Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
       ~expand_braces:true
+
+  let glob_path path = glob (Filename.concat "**" path)
 end
 
 module Flags = struct
@@ -83,6 +85,7 @@ module Compiler = struct
     ext : String_set.t;
     out_flag : string;
     obj_flag : string;
+    obj_ext : string option;
   }
 
   let clang =
@@ -91,6 +94,7 @@ module Compiler = struct
       out_flag = "-o";
       obj_flag = "-c";
       ext = String_set.of_list [ "c" ];
+      obj_ext = None;
     }
 
   let clangxx =
@@ -113,7 +117,16 @@ module Compiler = struct
   let ghc =
     { clang with command = [ "ghc" ]; ext = String_set.of_list [ "hs"; "lhs" ] }
 
-  let compile_obj t mgr ~sw ~output args =
+  let ocaml =
+    {
+      command = [ "ocamlfind"; "ocamlopt" ];
+      obj_flag = "-c";
+      out_flag = "-o";
+      obj_ext = Some "cmx";
+      ext = String_set.of_list [ "ml" ];
+    }
+
+  let compile_obj t mgr ~sw ?(objs = []) ~output args =
     let st =
       try
         Option.some
@@ -133,7 +146,7 @@ module Compiler = struct
           (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
         let cmd =
-          t.command @ args
+          t.command @ args @ objs
           @ [
               t.obj_flag;
               Eio.Path.native_exn output.Object_file.source.path;
@@ -143,10 +156,21 @@ module Compiler = struct
         in
         Some (Eio.Process.spawn mgr cmd ~sw)
 
-  let link t mgr objs ~output args =
+  let link t mgr objs ~output ~compiler_index args =
     Util.mkparent output;
     let objs =
-      List.map (fun f -> Eio.Path.native_exn f.Object_file.path) objs
+      List.map
+        (fun f ->
+          let c =
+            Hashtbl.find compiler_index @@ Source_file.ext f.Object_file.source
+          in
+          let path =
+            match c.obj_ext with
+            | Some ext -> Util.with_ext f.path ext
+            | None -> f.path
+          in
+          Eio.Path.native_exn path)
+        objs
     in
     let args =
       t.command @ args @ objs @ [ t.out_flag; Eio.Path.native_exn output ]
@@ -161,7 +185,7 @@ module Compiler_set = struct
     let compare a b = String_set.compare a.Compiler.ext b.Compiler.ext
   end)
 
-  let default = of_list Compiler.[ clang; ghc; ispc ]
+  let default = of_list Compiler.[ clang; ispc; ocaml; ghc ]
 
   let default_ext =
     fold (fun x -> String_set.union x.ext) default String_set.empty
@@ -222,12 +246,12 @@ module Build = struct
       compiler_index;
       compilers;
       linker;
-      files = List.map (fun x -> Util.glob (Filename.concat "**" x)) files;
+      files = List.map Util.glob_path files;
       script;
       after;
       flags = Option.value ~default:(Flags.v ()) flags;
       output;
-      ignore = List.map (fun x -> Util.glob (Filename.concat "**" x)) ignore;
+      ignore = List.map Util.glob_path ignore;
       name;
       compiler_flags;
       disable_cache;
@@ -261,9 +285,7 @@ module Build = struct
     else if Eio.Path.is_file Eio.Path.(t.env#cwd / "compile_flags.txt") then
       parse_compile_flags t Eio.Path.(t.env#cwd / "compile_flags.txt")
 
-  let add_source_file t path =
-    t.files <- t.files @ [ Util.glob (Filename.concat "**" path) ]
-
+  let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
   let add_source_files t files = List.iter (fun f -> add_source_file t f) files
   let clean t = Eio.Path.rmtree ~missing_ok:true t.build
   let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)
@@ -427,8 +449,7 @@ module Plan = struct
                             ~sw (Flags.concat b.flags flags).compile
                         in
                         let () = link_flags := Flags.concat !link_flags flags in
-                        Option.iter Eio.Process.await_exn task
-                      (*reporter 5*) );
+                        Option.iter Eio.Process.await_exn task );
                       obj :: objs
                   | _ -> objs))
           | _ -> objs)
@@ -438,7 +459,8 @@ module Plan = struct
       (fun output ->
         if !count > 0 then (
           log "⁕ LINK %s" (Eio.Path.native_exn output);
-          Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link))
+          Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link
+            ~compiler_index:b.compiler_index))
       b.output;
     Option.iter
       (fun s ->
@@ -459,22 +481,32 @@ module Config = struct
       ext : string list; [@default []]
       out_flag : string; [@default "-o"] [@key "out-flag"]
       obj_flag : string; [@default "-c"] [@key "obj-flag"]
+      obj_ext : string option; [@default None] [@key "obj-ext"]
     }
     [@@deriving yaml]
 
     let default =
-      { name = None; command = []; ext = []; out_flag = "-o"; obj_flag = "-c" }
+      {
+        name = None;
+        command = [];
+        ext = [];
+        out_flag = "-o";
+        obj_flag = "-c";
+        obj_ext = None;
+      }
 
     let clang = { default with name = Some "clang" }
     let ispc = { default with name = Some "ispc" }
     let clangxx = { default with name = Some "clang++" }
     let ghc = { default with name = Some "ghc" }
+    let ocaml = { default with name = Some "ocaml" }
 
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
       | "ispc" -> Some Compiler.ispc
       | "hs" | "ghc" -> Some Compiler.ghc
+      | "ml" | "ocaml" | "ocamlopt" | "ocamfind" -> Some Compiler.ocaml
       | _ -> None
 
     let rec compiler compilers t =
@@ -498,6 +530,7 @@ module Config = struct
               ext = String_set.of_list t.ext;
               out_flag = t.out_flag;
               obj_flag = t.obj_flag;
+              obj_ext = t.obj_ext;
             }
   end
 
@@ -518,7 +551,12 @@ module Config = struct
     end
 
     let default_compilers =
-      [ Compiler_config.clang; Compiler_config.ghc; Compiler_config.ispc ]
+      [
+        Compiler_config.clang;
+        Compiler_config.ispc;
+        Compiler_config.ocaml;
+        Compiler_config.ghc;
+      ]
 
     type t = {
       name : string option; [@default None]
@@ -526,10 +564,7 @@ module Config = struct
       output : string option; [@default None]
       compilers : Compiler_config.t list; [@default default_compilers]
       linker : Compiler_config.t; [@default Compiler_config.clang]
-      files : string list;
-          [@default
-            List.map (fun s -> "*." ^ s)
-            @@ String_set.to_list Compiler_set.default_ext]
+      files : string list; [@default [ "*.c" ]]
       ignore : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
       script : string option; [@default None]
@@ -546,9 +581,7 @@ module Config = struct
         ignore = [];
         compilers = default_compilers;
         linker = Compiler_config.clang;
-        files =
-          String_set.to_list
-            (String_set.map (fun x -> "*." ^ x) Compiler_set.default_ext);
+        files = [ "*.c" ];
         script = None;
         after = None;
         flags = [];
@@ -611,7 +644,6 @@ module Config = struct
             ~compiler_flags ?output ~source ~files:config.files ~name
             ~ignore:config.ignore env
         in
-        Build.add_source_files build config.files;
         build)
       t.build
 

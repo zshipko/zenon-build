@@ -29,12 +29,7 @@ let ignore =
 
 let file =
   let doc = "Add file" in
-  Arg.(
-    value
-    & (opt_all string
-      @@ Zenon.String_set.(
-           map (fun x -> "*." ^ x) Zenon.Compiler_set.default_ext |> to_list))
-    & info [ "file"; "f" ] ~doc ~docv:"FILE")
+  Arg.(value & opt_all string [] & info [ "file"; "f" ] ~doc ~docv:"FILE")
 
 let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
   Eio_posix.run @@ fun env ->
@@ -102,6 +97,23 @@ let clean ~path ~builds () =
   in
   List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean build) x
 
+let run ~path ~build ~args () =
+  Eio_posix.run @@ fun env ->
+  let path = Eio.Path.(env#fs / path) in
+  let x =
+    match Zenon.Config.load ~env path with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
+  | None -> Fmt.failwith "unable to find target %s\n" build
+  | Some b -> (
+      match b.output with
+      | None -> Fmt.failwith "target %s has not output" build
+      | Some exe ->
+          Eio.Process.run env#process_mgr ~executable:(Eio.Path.native_exn exe)
+            args)
+
 let cmd_build =
   Cmd.v (Cmd.info "build")
   @@
@@ -120,5 +132,21 @@ let cmd_clean =
   let+ builds = builds and+ path = path in
   clean ~path ~builds ()
 
-let main () = Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_clean ]
+let build =
+  let doc = "Build output to run" in
+  Arg.(value & pos 0 string "" & info [] ~doc ~docv:"BUILD")
+
+let run_args =
+  let doc = "Arguments to pass to executable" in
+  Arg.(value & pos_right 0 string [] & info [] ~doc ~docv:"BUILD")
+
+let cmd_run =
+  Cmd.v (Cmd.info "run")
+  @@
+  let+ build = build and+ path = path and+ args = run_args in
+  run ~path ~build ~args ()
+
+let main () =
+  Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean ]
+
 let () = if !Sys.interactive then () else exit (main ())
