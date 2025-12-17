@@ -439,7 +439,14 @@ module Config = struct
               with _ -> false)
           | None -> true
         in
-        if not ok then None
+        if not ok then
+          let () =
+            Util.log "! SKIP %s"
+              (Option.value
+                 ~default:(Option.value ~default:"default" config.path)
+                 config.name)
+          in
+          None
         else
           let linker =
             Compiler_config.compiler t.compilers config.Build_config.linker
