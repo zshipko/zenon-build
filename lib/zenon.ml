@@ -232,9 +232,7 @@ module Plan = struct
     Option.iter
       (fun s ->
         Util.log "• SCRIPT %s" s;
-        match Sys.command s with
-        | 0 -> ()
-        | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+        Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
       b.script;
     let link_flags = ref b.flags in
     let max = Domain.recommended_domain_count () in
@@ -283,9 +281,7 @@ module Plan = struct
     Option.iter
       (fun s ->
         Util.log "• SCRIPT %s" s;
-        match Sys.command s with
-        | 0 -> ()
-        | n -> failwith (Printf.sprintf "script failed with exit code: %d" n))
+        Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
       b.after
 
   let run_all t builds = List.iter (run_build t) builds
@@ -388,6 +384,7 @@ module Config = struct
       script : string option; [@default None]
       after : string option; [@default None]
       disable_cache : bool; [@default false]
+      only_if : string option; [@default None] [@key "if"]
     }
     [@@deriving yaml]
 
@@ -404,6 +401,7 @@ module Config = struct
         after = None;
         flags = [];
         disable_cache = false;
+        only_if = None;
       }
   end
 
@@ -430,39 +428,53 @@ module Config = struct
     else Ok empty
 
   let init ~env path t =
-    List.map
+    List.filter_map
       (fun config ->
-        let linker =
-          Compiler_config.compiler t.compilers config.Build_config.linker
+        let ok =
+          match config.Build_config.only_if with
+          | Some script -> (
+              try
+                Eio.Process.run env#process_mgr [ "sh"; "-c"; script ];
+                true
+              with _ -> false)
+          | None -> true
         in
-        let compilers =
-          List.map (Compiler_config.compiler []) t.compilers
-          @ List.map (Compiler_config.compiler t.compilers) config.compilers
-        in
-        let compiler_flags =
-          List.to_seq (t.flags @ config.flags)
-          |> Seq.map (fun v ->
-                 ( v.Build_config.Lang_flags.lang,
-                   Flags.v ~compile:v.compile ~link:v.link () ))
-          |> List.of_seq
-        in
-        let source =
-          match config.path with None -> path | Some p -> Eio.Path.(path / p)
-        in
-        let output =
-          Option.map (fun output -> Eio.Path.(source / output)) config.output
-        in
-        let name =
-          match config.name with
-          | Some name -> name
-          | None -> ( match config.path with Some p -> p | None -> "default")
-        in
-        let build =
-          Build.v ?script:config.script ?after:config.after ~linker ~compilers
-            ~compiler_flags ?output ~source ~files:config.files ~name
-            ~ignore:config.ignore env
-        in
-        build)
+        if not ok then None
+        else
+          let linker =
+            Compiler_config.compiler t.compilers config.Build_config.linker
+          in
+          let compilers =
+            List.map (Compiler_config.compiler []) t.compilers
+            @ List.map (Compiler_config.compiler t.compilers) config.compilers
+          in
+          let compiler_flags =
+            List.to_seq (t.flags @ config.flags)
+            |> Seq.map (fun v ->
+                   ( v.Build_config.Lang_flags.lang,
+                     Flags.v ~compile:v.compile ~link:v.link () ))
+            |> List.of_seq
+          in
+          let source =
+            match config.path with
+            | None -> path
+            | Some p -> Eio.Path.(path / p)
+          in
+          let output =
+            Option.map (fun output -> Eio.Path.(source / output)) config.output
+          in
+          let name =
+            match config.name with
+            | Some name -> name
+            | None -> (
+                match config.path with Some p -> p | None -> "default")
+          in
+          let build =
+            Build.v ?script:config.script ?after:config.after ~linker ~compilers
+              ~compiler_flags ?output ~source ~files:config.files ~name
+              ~ignore:config.ignore env
+          in
+          Some build)
       t.build
 
   let load ~env path =
