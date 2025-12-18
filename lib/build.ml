@@ -7,14 +7,14 @@ type t = {
   build : path;
   compiler_index : (string, Compiler.t) Hashtbl.t;
   compilers : Compiler_set.t;
-  linker : Compiler.t;
+  linker : Linker.t;
   script : string option;
   after : string option;
   name : string;
-  mutable pkgconf : string list;
-  mutable ignore : Re.t list;
+  pkgconf : string list;
+  ignore : Re.t list;
+  output : path option;
   mutable disable_cache : bool;
-  mutable output : path option;
   mutable files : Re.t list;
   mutable flags : Flags.t;
   mutable compiler_flags : (string, Flags.t) Hashtbl.t;
@@ -24,7 +24,7 @@ let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj")
 
-let v ?build ?(pkgconf = []) ?script ?after ?flags ?(linker = Compiler.clang)
+let v ?build ?(pkgconf = []) ?script ?after ?flags ?(linker = Linker.clang)
     ?compilers ?(compiler_flags = []) ?(files = []) ?(ignore = [])
     ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
@@ -88,16 +88,14 @@ let locate_source_files t : Source_file.t list =
   in
   inner t.source
 
-let parse_compile_flags t f =
-  Eio.Path.with_lines f @@ fun lines ->
-  let lines = Seq.map String.trim lines |> List.of_seq in
-  add_compile_flags t lines
+let parse_compile_flags f =
+  Eio.Path.with_lines f @@ fun lines -> Seq.map String.trim lines |> List.of_seq
 
-let flags_from_compile_flags t =
+let compile_flags t =
   let f = Eio.Path.(t.source / "compile_flags.txt") in
-  if Eio.Path.is_file f then parse_compile_flags t f
-  else if Eio.Path.is_file Eio.Path.(t.env#cwd / "compile_flags.txt") then
-    parse_compile_flags t Eio.Path.(t.env#cwd / "compile_flags.txt")
+  if Eio.Path.is_file f then parse_compile_flags f
+  else if Eio.Path.is_file f then parse_compile_flags f
+  else []
 
 let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
 let add_source_files t files = List.iter (fun f -> add_source_file t f) files

@@ -19,6 +19,7 @@ let value_id = function
 type cmd =
   | Script of string * path option
   | Compiler of Compiler.t * Flags.t option
+  | Linker of Linker.t
 
 let cmd_id = function
   | Script (b, output) ->
@@ -28,15 +29,10 @@ let cmd_id = function
            ^ b)
         |> Digest.to_hex)
   | Compiler (c, Some f) ->
-      "compiler:"
-      ^ String.concat "_" c.command
-      ^ String.concat "_" (String_set.to_list c.ext)
-      ^ String.concat "_" f.Flags.compile
-      ^ String.concat "_" f.Flags.link
-  | Compiler (c, None) ->
-      "compiler:"
-      ^ String.concat "_" c.command
-      ^ String.concat "_" (String_set.to_list c.ext)
+      "compiler:" ^ c.Compiler.name ^ "_" ^ String.concat "_" f.link
+      ^ String.concat "_" f.compile
+  | Compiler (c, None) -> "compiler:" ^ c.name
+  | Linker link -> "linker:" ^ link.name
 
 module Make = Graph.Imperative.Digraph.ConcreteLabeled (struct
   type t = value
@@ -66,6 +62,7 @@ module Plan = struct
         Build.add_source_file b "*.c"
     in
     let source_files = Build.locate_source_files b in
+    let flags = Flags.v ~compile:(Build.compile_flags b) () in
     let build_node = Build b in
     let output_node = Option.map (fun x -> Output x) b.output in
     G.add_vertex t.graph build_node;
@@ -99,11 +96,9 @@ module Plan = struct
                   "failed to pick compiler for extension %s in compilers: %a \
                    with extensions %a"
                   ext
-                  (Fmt.list
-                     ~sep:(Fmt.const Fmt.string ", ")
-                     (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string))
+                  (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string)
                   (Compiler_set.to_list b.compilers
-                  |> List.map (fun c -> c.Compiler.command))
+                  |> List.map (fun c -> c.Compiler.name))
                   (Fmt.list
                      ~sep:(Fmt.const Fmt.string ", ")
                      (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string))
@@ -116,10 +111,11 @@ module Plan = struct
                   (Compiler
                      ( compiler,
                        Some
-                         (Flags.concat
-                            (Hashtbl.find_opt b.compiler_flags ext
-                            |> Option.value ~default:(Flags.v ()))
-                            b.flags) )))
+                         (Flags.concat flags
+                         @@ Flags.concat
+                              (Hashtbl.find_opt b.compiler_flags ext
+                              |> Option.value ~default:(Flags.v ()))
+                              b.flags) )))
                obj_node;
           Option.iter
             (fun node -> G.add_edge_e t.graph @@ G.E.create obj_node e node)
@@ -134,7 +130,8 @@ module Plan = struct
         Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
       b.script;
     let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
-    let b_flags = Flags.concat pkg b.flags in
+    let flags = Flags.v ~compile:(Build.compile_flags b) () in
+    let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
     let link_flags = ref b_flags in
     let max = Domain.recommended_domain_count () in
     let pool = Eio.Semaphore.make max in
@@ -163,7 +160,8 @@ module Plan = struct
                         @@ fun () ->
                         let task =
                           Compiler.compile_obj c b.env#process_mgr ~output:obj
-                            ~sw (Flags.concat b_flags flags).compile
+                            ~sw
+                            (Flags.concat b_flags flags)
                         in
                         let () = link_flags := Flags.concat !link_flags flags in
                         Option.iter Eio.Process.await_exn task );
@@ -175,9 +173,9 @@ module Plan = struct
     Option.iter
       (fun output ->
         if !count > 0 then (
-          Util.log "⁕ LINK %s" (Eio.Path.native_exn output);
-          Compiler.link b.linker b.env#process_mgr objs ~output !link_flags.link
-            ~compiler_index:b.compiler_index))
+          Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
+          Linker.link b.linker b.env#process_mgr ~objs ~output
+            ~flags:!link_flags))
       b.output;
     Option.iter
       (fun s ->
@@ -197,63 +195,37 @@ end
 
 module Config = struct
   module Compiler_config = struct
-    type t = {
-      name : string option; [@default None]
-      command : string list; [@default []]
-      ext : string list; [@default []]
-      out_flag : string; [@default "-o"] [@key "out-flag"]
-      obj_flag : string; [@default "-c"] [@key "obj-flag"]
-      obj_ext : string option; [@default None] [@key "obj-ext"]
-    }
-    [@@deriving yaml]
+    type t = string [@@deriving yaml]
 
-    let default =
-      {
-        name = None;
-        command = [];
-        ext = [];
-        out_flag = "-o";
-        obj_flag = "-c";
-        obj_ext = None;
-      }
-
-    let clang = { default with name = Some "clang" }
-    let ispc = { default with name = Some "ispc" }
-    let clangxx = { default with name = Some "clang++" }
-    let ghc = { default with name = Some "ghc" }
-    let ocaml = { default with name = Some "ocaml" }
+    let clang = "clang"
+    let ispc = "ispc"
+    let clangxx = "clang++"
+    let ghc = "ghc"
 
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
       | "ispc" -> Some Compiler.ispc
       | "hs" | "ghc" -> Some Compiler.ghc
-      | "ml" | "ocaml" | "ocamlopt" | "ocamfind" -> Some Compiler.ocaml
       | _ -> None
 
-    let rec compiler compilers t =
-      match t.name with
-      | Some name -> (
-          match find_compiler name with
-          | None -> (
-              match
-                List.find_opt
-                  (fun x -> Option.value ~default:"" x.name = name)
-                  compilers
-              with
-              | Some c when not (List.is_empty c.command) ->
-                  compiler compilers c
-              | _ -> compiler compilers { t with name = None })
-          | Some x -> x)
-      | None ->
-          Compiler.
-            {
-              command = t.command;
-              ext = String_set.of_list t.ext;
-              out_flag = t.out_flag;
-              obj_flag = t.obj_flag;
-              obj_ext = t.obj_ext;
-            }
+    let find_linker = function
+      | "c" | "clang" -> Some Linker.clang
+      | "shared" -> Some Linker.clang_shared
+      | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Linker.clangxx
+      | "hs" | "ghc" -> Some Linker.ghc
+      | "ar" | "static" -> Some Linker.ar
+      | _ -> None
+
+    let compiler t =
+      match find_compiler t with
+      | None -> invalid_arg ("unknown compiler: " ^ t)
+      | Some x -> x
+
+    let linker t =
+      match find_linker t with
+      | None -> invalid_arg ("unknown linker: " ^ t)
+      | Some x -> x
   end
 
   module Build_config = struct
@@ -275,9 +247,17 @@ module Config = struct
     let default_compilers =
       [
         Compiler_config.clang;
+        Compiler_config.clangxx;
         Compiler_config.ispc;
-        Compiler_config.ocaml;
         Compiler_config.ghc;
+      ]
+
+    let default_linkers =
+      [
+        Compiler_config.clang;
+        Compiler_config.clangxx;
+        Compiler_config.ghc;
+        "ar";
       ]
 
     type t = {
@@ -358,12 +338,10 @@ module Config = struct
           in
           None
         else
-          let linker =
-            Compiler_config.compiler t.compilers config.Build_config.linker
-          in
+          let linker = Compiler_config.linker config.Build_config.linker in
           let compilers =
-            List.map (Compiler_config.compiler []) t.compilers
-            @ List.map (Compiler_config.compiler t.compilers) config.compilers
+            List.map Compiler_config.compiler t.compilers
+            @ List.map Compiler_config.compiler config.compilers
           in
           let compiler_flags =
             List.to_seq (t.flags @ config.flags)

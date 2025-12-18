@@ -17,11 +17,12 @@ let builds =
 
 let cflag =
   let doc = "Compiler flag" in
-  Arg.(value & opt_all string [] & info [ "cflag" ] ~doc ~docv:"FLAG")
+  Arg.(value & opt_all string [] & info [ "flag"; "cflag" ] ~doc ~docv:"FLAG")
 
 let ldflag =
   let doc = "Linker flag" in
-  Arg.(value & opt_all string [] & info [ "ldflag" ] ~doc ~docv:"FLAG")
+  Arg.(
+    value & opt_all string [] & info [ "flag:link"; "ldflag" ] ~doc ~docv:"FLAG")
 
 let ignore =
   let doc = "Ignore file" in
@@ -43,8 +44,12 @@ let pkg =
   let doc = "Pkg-config package" in
   Arg.(value & opt_all string [] & info [ "pkg" ] ~doc ~docv:"PACKAGE")
 
+let linker =
+  let doc = "Linker name" in
+  Arg.(value & opt (some string) None & info [ "linker" ] ~doc ~docv:"LINKER")
+
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
-    ~pkg () =
+    ~pkg ~linker () =
   Eio_posix.run @@ fun env ->
   let x =
     match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
@@ -59,7 +64,10 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
             Zenon.Build.v env ~ignore ~pkgconf:pkg
               ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
               ~source:Eio.Path.(env#fs / path)
-              ~files:file ~name:"default";
+              ~files:file ~name:"default"
+              ~linker:
+                (Zenon.Config.Compiler_config.linker
+                @@ Option.value ~default:"clang" linker);
           ] )
     | x -> (builds, x)
   in
@@ -76,23 +84,25 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
           Zenon.String_set.is_empty builds
           || Zenon.String_set.mem build.Zenon.Build.name builds
         then
-          let () =
+          let output =
             match output with
-            | None -> ()
-            | Some output ->
-                build.Zenon.Build.output <- Some Eio.Path.(env#cwd / output)
+            | None -> build.Zenon.Build.output
+            | Some output -> Some Eio.Path.(env#cwd / output)
           in
           let () = Zenon.Build.add_compile_flags build cflags in
           let () = Zenon.Build.add_link_flags build ldflags in
           let () = Zenon.Build.add_source_files build file in
-          let () =
-            build.Zenon.Build.ignore <-
-              build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore
-          in
-          let () =
-            build.Zenon.Build.pkgconf <- build.Zenon.Build.pkgconf @ pkg
-          in
-          Zenon.Plan.build plan build)
+          Zenon.Plan.build plan
+            {
+              build with
+              pkgconf = build.Zenon.Build.pkgconf @ pkg;
+              ignore =
+                build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore;
+              output;
+              linker =
+                Option.map Zenon.Config.Compiler_config.linker linker
+                |> Option.value ~default:build.linker;
+            })
       x
   in
   Zenon.Plan.run_all ~execute:run ~args:arg plan
@@ -125,8 +135,10 @@ let cmd_build =
   and+ ldflags = ldflag
   and+ arg = arg
   and+ pkg = pkg
+  and+ linker = linker
   and+ run = run in
-  build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run ~arg ~pkg ()
+  build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run ~arg ~pkg
+    ~linker ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
@@ -176,9 +188,14 @@ let pkg ~path ~prefix ~build ~version () =
   match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
   | None -> Fmt.failwith "unable to find target %s" build
   | Some b ->
+      let c_flags =
+        Hashtbl.find_opt b.compiler_flags "c"
+        |> Option.value ~default:(Zenon.Flags.v ())
+      in
+      let flags = Zenon.Flags.concat b.flags c_flags in
       print_endline
       @@ Zenon.Pkg_config.generate ~prefix ~version ~requires:b.pkgconf
-           ~cflags:b.flags.compile ~ldflags:b.flags.link b.name
+           ~cflags:flags.compile ~ldflags:flags.link b.name
 
 let prefix =
   let doc = "Installation prefix" in

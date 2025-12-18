@@ -34,54 +34,94 @@ module Object_file = struct
     v ?flags ~source @@ obj_file
 end
 
+module Linker = struct
+  type t = {
+    name : string;
+    command :
+      flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
+  }
+
+  let link t mgr ~output ~objs ~flags =
+    Util.mkparent output;
+    let cmd = t.command ~flags ~objs ~output in
+    Eio.Process.run mgr cmd
+
+  let c_like cc =
+   fun ~flags ~objs ~output ->
+    let objs =
+      List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+    in
+    cc @ [ "-o"; Eio.Path.native_exn output ] @ flags.Flags.link @ objs
+
+  let clang = { name = "clang"; command = c_like [ "clang" ] }
+  let clang_shared = { name = "clang"; command = c_like [ "clang"; "-shared" ] }
+  let clangxx = { name = "clang++"; command = c_like [ "clang++" ] }
+  let ghc = { name = "ghc"; command = c_like [ "ghc" ] }
+
+  let ar =
+    {
+      name = "ar";
+      command =
+        (fun ~flags:_ ~objs ~output ->
+          let objs =
+            List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+          in
+          [ "ar"; "rcs"; Eio.Path.native_exn output ] @ objs);
+    }
+end
+
 module Compiler = struct
   type t = {
-    command : string list;
+    name : string;
+    command : flags:Flags.t -> output:Object_file.t -> string list;
     ext : String_set.t;
-    out_flag : string;
-    obj_flag : string;
-    obj_ext : string option;
   }
+
+  let c_like cc =
+   fun ~flags ~output ->
+    cc
+    @ [ "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
+    @ flags.Flags.compile
+    @ [ Eio.Path.native_exn output.source.path ]
 
   let clang =
     {
-      command = [ "clang" ];
-      out_flag = "-o";
-      obj_flag = "-c";
+      name = "clang";
+      command = c_like [ "clang" ];
       ext = String_set.of_list [ "c" ];
-      obj_ext = None;
     }
 
   let clangxx =
     {
-      clang with
-      command = [ "clang++" ];
+      name = "clang++";
+      command = c_like [ "clang++" ];
       ext = String_set.of_list [ "cc"; "cpp" ];
     }
 
-  let zig_cc = { clang with command = [ "zig"; "cc" ] }
-
   let ispc =
     {
-      clang with
-      command = [ "ispc" ];
-      obj_flag = "--emit-obj";
+      name = "ispc";
+      command =
+        (fun ~flags ~output ->
+          [
+            "ispc";
+            "--emit-obj";
+            "-o";
+            Eio.Path.native_exn output.Object_file.path;
+          ]
+          @ flags.compile
+          @ [ Eio.Path.native_exn output.source.path ]);
       ext = String_set.of_list [ "ispc" ];
     }
 
   let ghc =
-    { clang with command = [ "ghc" ]; ext = String_set.of_list [ "hs"; "lhs" ] }
-
-  let ocaml =
     {
-      command = [ "ocamlfind"; "ocamlopt" ];
-      obj_flag = "-c";
-      out_flag = "-o";
-      obj_ext = Some "cmx";
-      ext = String_set.of_list [ "ml" ];
+      name = "ghc";
+      command = c_like [ "ghc" ];
+      ext = String_set.of_list [ "hs"; "lhs" ];
     }
 
-  let compile_obj t mgr ~sw ?(objs = []) ~output args =
+  let compile_obj t mgr ~sw ~output flags =
     let st =
       try
         Option.some
@@ -91,46 +131,17 @@ module Compiler = struct
     in
     match st with
     | Some (obj, src) when obj.mtime > src.mtime ->
-        Util.log "• CACHE %s (%s)"
+        Util.log "• CACHE %s -> %s"
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
         None
     | _ ->
-        Util.log "• BUILD %s -> %s"
+        Util.log "• BUILD(%s) %s -> %s" t.name
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
-        let cmd =
-          t.command @ args @ objs
-          @ [
-              t.obj_flag;
-              Eio.Path.native_exn output.Object_file.source.path;
-              t.out_flag;
-              Eio.Path.native_exn output.Object_file.path;
-            ]
-        in
+        let cmd = t.command ~flags ~output in
         Some (Eio.Process.spawn mgr cmd ~sw)
-
-  let link t mgr objs ~output ~compiler_index args =
-    Util.mkparent output;
-    let objs =
-      List.map
-        (fun f ->
-          let c =
-            Hashtbl.find compiler_index @@ Source_file.ext f.Object_file.source
-          in
-          let path =
-            match c.obj_ext with
-            | Some ext -> Util.with_ext f.path ext
-            | None -> f.path
-          in
-          Eio.Path.native_exn path)
-        objs
-    in
-    let args =
-      t.command @ args @ objs @ [ t.out_flag; Eio.Path.native_exn output ]
-    in
-    Eio.Process.run mgr args
 end
 
 module Compiler_set = struct
@@ -140,7 +151,7 @@ module Compiler_set = struct
     let compare a b = String_set.compare a.Compiler.ext b.Compiler.ext
   end)
 
-  let default = of_list Compiler.[ clang; ispc; ocaml; ghc ]
+  let default = of_list Compiler.[ clang; clangxx; ispc; ghc ]
 
   let default_ext =
     fold (fun x -> String_set.union x.ext) default String_set.empty

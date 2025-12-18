@@ -32,14 +32,18 @@ let parse_line line : string list =
   next x
 
 let cflags ~env names =
-  Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
-    ([ "pkg-config"; "--cflags" ] @ names)
-  |> parse_line
+  if List.is_empty names then []
+  else
+    Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
+      ([ "pkg-config"; "--cflags" ] @ names)
+    |> parse_line
 
 let ldflags ~env names =
-  Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
-    ([ "pkg-config"; "--libs" ] @ names)
-  |> parse_line
+  if List.is_empty names then []
+  else
+    Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
+      ([ "pkg-config"; "--libs" ] @ names)
+    |> parse_line
 
 let flags ~env names =
   let compile = cflags ~env names in
@@ -47,8 +51,9 @@ let flags ~env names =
   Compiler.Flags.v ~compile ~link ()
 
 let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
-    ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) name ~cflags
-    ~ldflags =
+    ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) ?lib_name
+    name ~cflags ~ldflags =
+  let lib_name = Option.value ~default:name lib_name in
   Fmt.str
     "prefix=%s\n\
      includedir=${prefix}/%s/%s\n\
@@ -56,12 +61,12 @@ let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
      Name: %s\n\
      Description: %s\n\
      Version: %s\n\
-     Cflags: %a\n\
-     Libs: %a\n\
+     Cflags: -I${includedir} %a\n\
+     Libs: -L${libdir} -l%s %a\n\
      Requires: %a\n"
     prefix include_dir name name lib_dir name version
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
-    cflags
+    cflags lib_name
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
     ldflags
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
