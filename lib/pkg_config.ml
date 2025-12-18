@@ -64,7 +64,7 @@ let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
      Cflags: -I${includedir} %a\n\
      Libs: -L${libdir} -l%s %a\n\
      Requires: %a\n"
-    prefix include_dir name name lib_dir name version
+    prefix include_dir lib_dir name name name version
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
     cflags lib_name
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)

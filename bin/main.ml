@@ -193,9 +193,18 @@ let pkg ~path ~prefix ~build ~version () =
         |> Option.value ~default:(Zenon.Flags.v ())
       in
       let flags = Zenon.Flags.concat b.flags c_flags in
+      let lib_name =
+        match b.output with
+        | Some s ->
+            let s = Eio.Path.native_exn s |> Filename.basename in
+            if String.starts_with ~prefix:"lib" s then
+              Filename.remove_extension @@ String.sub s 3 (String.length s - 3)
+            else b.name
+        | None -> b.name
+      in
       print_endline
-      @@ Zenon.Pkg_config.generate ~prefix ~version ~requires:b.pkgconf
-           ~cflags:flags.compile ~ldflags:flags.link b.name
+      @@ Zenon.Pkg_config.generate ~lib_name ~prefix ~version
+           ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link b.name
 
 let prefix =
   let doc = "Installation prefix" in
