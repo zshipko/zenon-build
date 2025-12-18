@@ -273,7 +273,7 @@ module Config = struct
       after : string option; [@default None]
       disable_cache : bool; [@default false]
       only_if : string option; [@default None] [@key "if"]
-      pkgconf : string list; [@default []] [@key "pkg-config"]
+      pkgconf : string list; [@default []] [@key "pkg"]
     }
     [@@deriving yaml]
 
