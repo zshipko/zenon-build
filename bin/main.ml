@@ -151,7 +151,7 @@ let run ~path ~build ~args () =
     | Error (`Msg err) -> failwith err
   in
   match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
-  | None -> Fmt.failwith "unable to find target %s\n" build
+  | None -> Fmt.failwith "unable to find target %s" build
   | Some b -> (
       match b.output with
       | None -> Fmt.failwith "target %s has not output" build
@@ -165,7 +165,40 @@ let cmd_run =
   let+ build = build and+ path = path and+ args = run_args in
   run ~path ~build ~args ()
 
+let pkg ~path ~prefix ~build ~version () =
+  Eio_posix.run @@ fun env ->
+  let path = Eio.Path.(env#fs / path) in
+  let x =
+    match Zenon.Config.load ~env path with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
+  | None -> Fmt.failwith "unable to find target %s" build
+  | Some b ->
+      print_endline
+      @@ Zenon.Pkg_config.generate ~prefix ~version ~requires:b.pkgconf
+           ~cflags:b.flags.compile ~ldflags:b.flags.link b.name
+
+let prefix =
+  let doc = "Installation prefix" in
+  Arg.(value & opt string "/usr/local" & info [ "prefix" ] ~doc ~docv:"PATH")
+
+let version =
+  let doc = "Version" in
+  Arg.(value & opt string "0.0.0" & info [ "version" ] ~doc ~docv:"VERSION")
+
+let cmd_pkg =
+  Cmd.v (Cmd.info "pkg")
+  @@
+  let+ build = build
+  and+ path = path
+  and+ prefix = prefix
+  and+ version = version in
+  pkg ~path ~build ~prefix ~version ()
+
 let main () =
-  Cmd.eval @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean ]
+  Cmd.eval
+  @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean; cmd_pkg ]
 
 let () = if !Sys.interactive then () else exit (main ())

@@ -45,3 +45,24 @@ let flags ~env names =
   let compile = cflags ~env names in
   let link = ldflags ~env names in
   Compiler.Flags.v ~compile ~link ()
+
+let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
+    ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) name ~cflags
+    ~ldflags =
+  Fmt.str
+    "prefix=%s\n\
+     includedir=${prefix}/%s/%s\n\
+     libdir=${prefix}/%s\n\n\
+     Name: %s\n\
+     Description: %s\n\
+     Version: %s\n\
+     Cflags: %a\n\
+     Libs: %a\n\
+     Requires: %a\n"
+    prefix include_dir name name lib_dir name version
+    (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
+    cflags
+    (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
+    ldflags
+    (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
+    requires

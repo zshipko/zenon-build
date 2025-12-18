@@ -2,6 +2,7 @@ include Types
 include Compiler
 module Util = Util
 module Build = Build
+module Pkg_config = Pkg_config
 
 type value =
   | Build of Build.t
