@@ -125,14 +125,16 @@ module Plan = struct
             output_node)
       source_files
 
-  let run_build t (b : Build.t) =
+  let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
     Util.log "◎ RUN %s" b.name;
     Option.iter
       (fun s ->
         Util.log "• SCRIPT %s" s;
         Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
       b.script;
-    let link_flags = ref b.flags in
+    let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
+    let b_flags = Flags.concat pkg b.flags in
+    let link_flags = ref b_flags in
     let max = Domain.recommended_domain_count () in
     let pool = Eio.Semaphore.make max in
     let count = ref 0 in
@@ -160,7 +162,7 @@ module Plan = struct
                         @@ fun () ->
                         let task =
                           Compiler.compile_obj c b.env#process_mgr ~output:obj
-                            ~sw (Flags.concat b.flags flags).compile
+                            ~sw (Flags.concat b_flags flags).compile
                         in
                         let () = link_flags := Flags.concat !link_flags flags in
                         Option.iter Eio.Process.await_exn task );
@@ -180,9 +182,16 @@ module Plan = struct
       (fun s ->
         Util.log "• SCRIPT %s" s;
         Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
-      b.after
+      b.after;
+    if execute then
+      match b.output with
+      | None -> Fmt.failwith "target %s has not output" b.name
+      | Some exe ->
+          Eio.Process.run b.env#process_mgr
+            ~executable:(Eio.Path.native_exn exe) execute_args
 
-  let run_all t builds = List.iter (run_build t) builds
+  let run_all ?execute ?args t builds =
+    List.iter (run_build ?execute ?execute_args:args t) builds
 end
 
 module Config = struct
@@ -283,6 +292,7 @@ module Config = struct
       after : string option; [@default None]
       disable_cache : bool; [@default false]
       only_if : string option; [@default None] [@key "if"]
+      pkgconf : string list; [@default []] [@key "pkg-config"]
     }
     [@@deriving yaml]
 
@@ -300,6 +310,7 @@ module Config = struct
         flags = [];
         disable_cache = false;
         only_if = None;
+        pkgconf = [];
       }
   end
 
@@ -375,9 +386,9 @@ module Config = struct
                 match config.path with Some p -> p | None -> "default")
           in
           let build =
-            Build.v ?script:config.script ?after:config.after ~linker ~compilers
-              ~compiler_flags ?output ~source ~files:config.files ~name
-              ~ignore:config.ignore env
+            Build.v ?script:config.script ~pkgconf:config.pkgconf
+              ?after:config.after ~linker ~compilers ~compiler_flags ?output
+              ~source ~files:config.files ~name ~ignore:config.ignore env
           in
           Some build)
       t.build

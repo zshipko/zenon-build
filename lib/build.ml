@@ -11,6 +11,7 @@ type t = {
   script : string option;
   after : string option;
   name : string;
+  mutable pkgconf : string list;
   mutable ignore : Re.t list;
   mutable disable_cache : bool;
   mutable output : path option;
@@ -23,9 +24,9 @@ let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj")
 
-let v ?build ?script ?after ?flags ?(linker = Compiler.clang) ?compilers
-    ?(compiler_flags = []) ?(files = []) ?(ignore = []) ?(disable_cache = false)
-    ?output ~source ~name env =
+let v ?build ?(pkgconf = []) ?script ?after ?flags ?(linker = Compiler.clang)
+    ?compilers ?(compiler_flags = []) ?(files = []) ?(ignore = [])
+    ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler_set.default
@@ -48,6 +49,7 @@ let v ?build ?script ?after ?flags ?(linker = Compiler.clang) ?compilers
         c.Compiler.ext)
     compilers;
   {
+    pkgconf;
     env;
     source;
     build;

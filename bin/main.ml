@@ -31,7 +31,20 @@ let file =
   let doc = "Add file" in
   Arg.(value & opt_all string [] & info [ "file"; "f" ] ~doc ~docv:"FILE")
 
-let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
+let run =
+  let doc = "Run after compiling" in
+  Arg.(value & flag & info [ "run"; "r" ] ~doc)
+
+let arg =
+  let doc = "Run argument" in
+  Arg.(value & opt_all string [] & info [ "arg" ] ~doc ~docv:"ARGUMENT")
+
+let pkg =
+  let doc = "Pkg-config package" in
+  Arg.(value & opt_all string [] & info [ "pkg" ] ~doc ~docv:"PACKAGE")
+
+let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
+    ~pkg () =
   Eio_posix.run @@ fun env ->
   let x =
     match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
@@ -43,7 +56,7 @@ let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
     | [] ->
         ( [ "default" ],
           [
-            Zenon.Build.v env ~ignore
+            Zenon.Build.v env ~ignore ~pkgconf:pkg
               ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default";
@@ -76,10 +89,13 @@ let build ?output ?(ignore = []) ~cflags ~ldflags ~path ~builds ~file () =
             build.Zenon.Build.ignore <-
               build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore
           in
+          let () =
+            build.Zenon.Build.pkgconf <- build.Zenon.Build.pkgconf @ pkg
+          in
           Zenon.Plan.build plan build)
       x
   in
-  Zenon.Plan.run_all plan
+  Zenon.Plan.run_all ~execute:run ~args:arg plan
     (List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x)
 
 let clean ~path ~builds () =
@@ -97,6 +113,35 @@ let clean ~path ~builds () =
   in
   List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean build) x
 
+let cmd_build =
+  Cmd.v (Cmd.info "build")
+  @@
+  let+ output = output
+  and+ file = file
+  and+ ignore = ignore
+  and+ path = path
+  and+ builds = builds
+  and+ cflags = cflag
+  and+ ldflags = ldflag
+  and+ arg = arg
+  and+ pkg = pkg
+  and+ run = run in
+  build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run ~arg ~pkg ()
+
+let cmd_clean =
+  Cmd.v (Cmd.info "clean")
+  @@
+  let+ builds = builds and+ path = path in
+  clean ~path ~builds ()
+
+let build =
+  let doc = "Build output to run" in
+  Arg.(value & pos 0 string "" & info [] ~doc ~docv:"BUILD")
+
+let run_args =
+  let doc = "Arguments to pass to executable" in
+  Arg.(value & pos_right 0 string [] & info [] ~doc ~docv:"ARG")
+
 let run ~path ~build ~args () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
@@ -113,32 +158,6 @@ let run ~path ~build ~args () =
       | Some exe ->
           Eio.Process.run env#process_mgr ~executable:(Eio.Path.native_exn exe)
             args)
-
-let cmd_build =
-  Cmd.v (Cmd.info "build")
-  @@
-  let+ output = output
-  and+ file = file
-  and+ ignore = ignore
-  and+ path = path
-  and+ builds = builds
-  and+ cflags = cflag
-  and+ ldflags = ldflag in
-  build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ()
-
-let cmd_clean =
-  Cmd.v (Cmd.info "clean")
-  @@
-  let+ builds = builds and+ path = path in
-  clean ~path ~builds ()
-
-let build =
-  let doc = "Build output to run" in
-  Arg.(value & pos 0 string "" & info [] ~doc ~docv:"BUILD")
-
-let run_args =
-  let doc = "Arguments to pass to executable" in
-  Arg.(value & pos_right 0 string [] & info [] ~doc ~docv:"BUILD")
 
 let cmd_run =
   Cmd.v (Cmd.info "run")
