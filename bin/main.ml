@@ -148,7 +148,7 @@ let cmd_clean =
 
 let build =
   let doc = "Build output to run" in
-  Arg.(value & pos 0 string "" & info [] ~doc ~docv:"BUILD")
+  Arg.(value & pos 0 (some string) None & info [] ~doc ~docv:"BUILD")
 
 let run_args =
   let doc = "Arguments to pass to executable" in
@@ -162,11 +162,16 @@ let run ~path ~build ~args () =
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
-  match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
-  | None -> Fmt.failwith "unable to find target %s" build
+  let b =
+    match build with
+    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | None -> ( try Some (List.hd x) with _ -> None)
+  in
+  match b with
+  | None -> Fmt.failwith "no target found"
   | Some b -> (
       match b.output with
-      | None -> Fmt.failwith "target %s has not output" build
+      | None -> Fmt.failwith "target %s has not output" b.name
       | Some exe ->
           Eio.Process.run env#process_mgr ~executable:(Eio.Path.native_exn exe)
             args)
@@ -185,8 +190,13 @@ let pkg ~path ~prefix ~build ~version () =
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
-  match List.find_opt (fun b -> b.Zenon.Build.name = build) x with
-  | None -> Fmt.failwith "unable to find target %s" build
+  let b =
+    match build with
+    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | None -> ( try Some (List.hd x) with _ -> None)
+  in
+  match b with
+  | None -> Fmt.failwith "no target found"
   | Some b ->
       let c_flags =
         Hashtbl.find_opt b.compiler_flags "c"
