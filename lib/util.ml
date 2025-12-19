@@ -14,7 +14,11 @@ let with_ext path ext =
 
 let mkparent path =
   let parent = Eio.Path.split path |> Option.map fst in
-  Option.iter (Eio.Path.mkdirs ~exists_ok:true ~perm:0o755) parent
+  Option.iter
+    (fun p ->
+      if Eio.Path.native_exn p = "." then ()
+      else Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 p)
+    parent
 
 let relative_to base a =
   let prefix = Eio.Path.native_exn base in

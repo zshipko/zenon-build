@@ -402,7 +402,7 @@ module Config = struct
             | Some p -> Eio.Path.(path / p)
           in
           let output =
-            Option.map (fun output -> Eio.Path.(source / output)) config.output
+            Option.map (fun output -> Eio.Path.(env#fs / output)) config.output
           in
           let name =
             match config.name with
