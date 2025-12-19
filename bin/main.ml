@@ -49,7 +49,7 @@ let linker =
   Arg.(value & opt (some string) None & info [ "linker" ] ~doc ~docv:"LINKER")
 
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
-    ~pkg ~linker () =
+    ~pkg ~(linker : string option) () =
   Eio_posix.run @@ fun env ->
   let x =
     match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
@@ -65,9 +65,12 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
               ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default"
-              ~linker:
-                (Zenon.Config.Compiler_config.linker
-                @@ Option.value ~default:"clang" linker);
+              ?linker:
+                (Option.map
+                   (fun name ->
+                     Zenon.Config.Compiler_config.(
+                       linker { name; ext = []; command = None }))
+                   linker);
           ] )
     | x -> (builds, x)
   in
@@ -100,8 +103,12 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore;
               output;
               linker =
-                Option.map Zenon.Config.Compiler_config.linker linker
-                |> Option.value ~default:build.linker;
+                Option.map
+                  (fun name ->
+                    Zenon.Config.Compiler_config.(
+                      linker { name; ext = []; command = None }))
+                  linker
+                |> Option.value ~default:Zenon.Linker.clang;
             })
       x
   in

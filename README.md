@@ -1,9 +1,4 @@
 # zenon: C build tool of the 21st century
 
-An experimental build system for the C family of languages (with partial support for other languages)
+An experimental build system and script runner for the C family of languages (maybe a few others)
 
-Languages:
-- C: full
-- C++: full
-- OCaml: partial
-- Haskell: partial

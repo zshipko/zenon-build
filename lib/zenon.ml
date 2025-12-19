@@ -195,12 +195,17 @@ end
 
 module Config = struct
   module Compiler_config = struct
-    type t = string [@@deriving yaml]
+    type t = {
+      name : string;
+      ext : string list; [@default []]
+      command : string list option; [@default None]
+    }
+    [@@deriving yaml]
 
-    let clang = "clang"
-    let ispc = "ispc"
-    let clangxx = "clang++"
-    let ghc = "ghc"
+    let clang = { name = "clang"; ext = []; command = None }
+    let ispc = { name = "ispc"; ext = []; command = None }
+    let clangxx = { name = "clang++"; ext = []; command = None }
+    let ghc = { name = "ghc"; ext = []; command = None }
 
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
@@ -218,14 +223,55 @@ module Config = struct
       | _ -> None
 
     let compiler t =
-      match find_compiler t with
-      | None -> invalid_arg ("unknown compiler: " ^ t)
-      | Some x -> x
+      match t.command with
+      | Some cmd ->
+          Compiler.
+            {
+              name = t.name;
+              ext = String_set.of_list t.ext;
+              command =
+                (fun ~flags ~output ->
+                  List.fold_left
+                    (fun (acc : string list) x ->
+                      if String.equal x "#output" then
+                        acc @ [ Eio.Path.native_exn output.path ]
+                      else if String.equal x "#flags" then acc @ flags.compile
+                      else acc @ [ x ])
+                    [] cmd);
+            }
+      | None -> (
+          match find_compiler t.name with
+          | None -> invalid_arg ("unknown compiler: " ^ t.name)
+          | Some x -> x)
 
     let linker t =
-      match find_linker t with
-      | None -> invalid_arg ("unknown linker: " ^ t)
-      | Some x -> x
+      match t.command with
+      | Some cmd ->
+          Linker.
+            {
+              name = t.name;
+              command =
+                (fun ~flags ~objs ~output ->
+                  List.fold_left
+                    (fun (acc : string list) x ->
+                      if String.equal x "#objs" then
+                        let objs =
+                          List.map
+                            (fun obj ->
+                              Eio.Path.native_exn obj.Object_file.path)
+                            objs
+                        in
+                        acc @ objs
+                      else if String.equal x "#output" then
+                        acc @ [ Eio.Path.native_exn output ]
+                      else if String.equal x "#flags" then acc @ flags.link
+                      else acc @ [ x ])
+                    [] cmd);
+            }
+      | None -> (
+          match find_linker t.name with
+          | None -> invalid_arg ("unknown linker: " ^ t.name)
+          | Some x -> x)
   end
 
   module Build_config = struct
@@ -257,7 +303,7 @@ module Config = struct
         Compiler_config.clang;
         Compiler_config.clangxx;
         Compiler_config.ghc;
-        "ar";
+        Compiler_config.{ clang with name = "ar" };
       ]
 
     type t = {
