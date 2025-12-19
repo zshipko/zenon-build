@@ -34,16 +34,26 @@ let parse_line line : string list =
 let cflags ~env names =
   if List.is_empty names then []
   else
-    Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
-      ([ "pkg-config"; "--cflags" ] @ names)
-    |> parse_line
+    try
+      Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
+        ([ "pkg-config"; "--cflags" ] @ names)
+      |> parse_line
+    with _ ->
+      Fmt.failwith "unable to find pkg-config package %a"
+        (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string)
+        names
 
 let ldflags ~env names =
   if List.is_empty names then []
   else
-    Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
-      ([ "pkg-config"; "--libs" ] @ names)
-    |> parse_line
+    try
+      Eio.Process.parse_out env#process_mgr Eio.Buf_read.line
+        ([ "pkg-config"; "--libs" ] @ names)
+      |> parse_line
+    with _ ->
+      Fmt.failwith "unable to find pkg-config package %a"
+        (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string)
+        names
 
 let flags ~env names =
   let compile = cflags ~env names in
