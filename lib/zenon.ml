@@ -184,7 +184,7 @@ module Plan = struct
       b.after;
     if execute then
       match b.output with
-      | None -> Fmt.failwith "target %s has not output" b.name
+      | None -> Fmt.failwith "target %s has no output" b.name
       | Some exe ->
           Eio.Process.run b.env#process_mgr
             ~executable:(Eio.Path.native_exn exe) execute_args

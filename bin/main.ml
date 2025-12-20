@@ -65,6 +65,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
               ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default"
+              ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
               ?linker:
                 (Option.map
                    (fun name ->
