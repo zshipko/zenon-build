@@ -186,8 +186,7 @@ module Plan = struct
       match b.output with
       | None -> Fmt.failwith "target %s has no output" b.name
       | Some exe ->
-          Eio.Process.run b.env#process_mgr
-            ~executable:(Eio.Path.native_exn exe) execute_args
+          Eio.Process.run b.env#process_mgr (Eio.Path.native_exn exe :: execute_args)
 
   let run_all ?execute ?args t builds =
     List.iter (run_build ?execute ?execute_args:args t) builds
