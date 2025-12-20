@@ -72,7 +72,7 @@ let locate_source_files t : Source_file.t list =
   let rec inner path =
     let files = Eio.Path.read_dir path in
     let ignore = Re.alt t.ignore |> Re.compile in
-    let check f = match t.ignore with [] -> true | _ -> Re.execp ignore f in
+    let check f = match t.ignore with [] -> true | _ -> not (Re.execp ignore f) in
     List.fold_left
       (fun (acc : Source_file.t list) file ->
         let f = Eio.Path.(path / file) in
@@ -101,6 +101,8 @@ let compile_flags t =
   else []
 
 let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
-let add_source_files t files = List.iter (fun f -> add_source_file t f) files
+let add_source_files t ?(reset = false) files =
+  if reset then t.files <- [];
+  List.iter (fun f -> add_source_file t f) files
 let clean t = Eio.Path.rmtree ~missing_ok:true t.build
 let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)

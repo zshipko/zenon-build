@@ -95,7 +95,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
           in
           let () = Zenon.Build.add_compile_flags build cflags in
           let () = Zenon.Build.add_link_flags build ldflags in
-          let () = Zenon.Build.add_source_files build file in
+          let () = Zenon.Build.add_source_files ~reset:(not (List.is_empty file)) build file in
           Zenon.Plan.build plan
             {
               build with
