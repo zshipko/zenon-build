@@ -408,7 +408,10 @@ module Config = struct
             match config.name with
             | Some name -> name
             | None -> (
-                match config.path with Some p -> p | None -> "default")
+                match config.output with
+                | Some p -> p
+                | None -> (
+                    match config.path with Some p -> p | None -> "default"))
           in
           let build =
             Build.v ?script:config.script ~pkgconf:config.pkgconf
