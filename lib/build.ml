@@ -71,14 +71,17 @@ let locate_source_files t : Source_file.t list =
   let re = Re.alt t.files |> Re.compile in
   let rec inner path =
     let files = Eio.Path.read_dir path in
+    let ignore = Re.alt t.ignore |> Re.compile in
+    let check f = match t.ignore with [] -> true | _ -> Re.execp ignore f in
     List.fold_left
       (fun (acc : Source_file.t list) file ->
         let f = Eio.Path.(path / file) in
         if Eio.Path.is_directory f then
           if
-            not
-              (String.equal file "zenon-build"
-              || String.equal file ".git" || String.equal file ".jj")
+            check file
+            && not
+                 (String.equal file "zenon-build"
+                 || String.equal file ".git" || String.equal file ".jj")
           then inner f @ acc
           else acc
         else if Re.execp re (Eio.Path.native_exn f) then
