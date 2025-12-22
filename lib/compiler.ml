@@ -88,7 +88,7 @@ module Compiler = struct
     {
       name = "clang";
       command = c_like [ "clang" ];
-      ext = String_set.of_list [ "c" ];
+      ext = String_set.of_list [ "c"; "s"; "ll"; "bc" ];
     }
 
   let clangxx =
