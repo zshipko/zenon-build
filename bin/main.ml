@@ -241,8 +241,49 @@ let cmd_pkg =
   and+ version = version in
   pkg ~path ~build ~prefix ~version ()
 
+
+let cmake ~path ~build ~version:_ () =
+  Eio_posix.run @@ fun env ->
+  let path = Eio.Path.(env#fs / path) in
+  let x =
+    match Zenon.Config.load ~env path with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  let b =
+    match build with
+    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | None -> ( try Some (List.hd x) with _ -> None)
+  in
+  match b with
+  | None -> Fmt.failwith "no target found"
+  | Some b ->
+      let c_flags =
+        Hashtbl.find_opt b.compiler_flags "c"
+        |> Option.value ~default:(Zenon.Flags.v ())
+      in
+      let _flags = Zenon.Flags.concat b.flags c_flags in
+      let _lib_name =
+        match b.output with
+        | Some s ->
+            let s = Eio.Path.native_exn s |> Filename.basename in
+            if String.starts_with ~prefix:"lib" s then
+              Filename.remove_extension @@ String.sub s 3 (String.length s - 3)
+            else b.name
+        | None -> b.name
+      in
+      failwith "TODO"
+
+let cmd_cmake =
+  Cmd.v (Cmd.info "cmake")
+  @@
+  let+ build = build
+  and+ path = path
+  and+ version = version in
+  cmake ~path ~build ~version ()
+
 let main () =
   Cmd.eval
-  @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean; cmd_pkg ]
+  @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake ]
 
 let () = if !Sys.interactive then () else exit (main ())

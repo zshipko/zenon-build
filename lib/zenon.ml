@@ -3,6 +3,7 @@ include Compiler
 module Util = Util
 module Build = Build
 module Pkg_config = Pkg_config
+module Cmake = Cmake
 
 type value =
   | Build of Build.t
