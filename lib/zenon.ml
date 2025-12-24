@@ -187,7 +187,8 @@ module Plan = struct
       match b.output with
       | None -> Fmt.failwith "target %s has no output" b.name
       | Some exe ->
-          Eio.Process.run b.env#process_mgr (Eio.Path.native_exn exe :: execute_args)
+          Eio.Process.run b.env#process_mgr
+            (Eio.Path.native_exn exe :: execute_args)
 
   let run_all ?execute ?args t builds =
     List.iter (run_build ?execute ?execute_args:args t) builds
@@ -199,13 +200,31 @@ module Config = struct
       name : string;
       ext : string list; [@default []]
       command : string list option; [@default None]
+      link_type : Linker.link_type; [@default Linker.Executable]
     }
     [@@deriving yaml]
 
-    let clang = { name = "clang"; ext = []; command = None }
-    let ispc = { name = "ispc"; ext = []; command = None }
-    let clangxx = { name = "clang++"; ext = []; command = None }
-    let ghc = { name = "ghc"; ext = []; command = None }
+    let clang =
+      {
+        name = "clang";
+        ext = [];
+        command = None;
+        link_type = Linker.Executable;
+      }
+
+    let ispc =
+      { name = "ispc"; ext = []; command = None; link_type = Linker.Executable }
+
+    let clangxx =
+      {
+        name = "clang++";
+        ext = [];
+        command = None;
+        link_type = Linker.Executable;
+      }
+
+    let ghc =
+      { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
 
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
@@ -250,6 +269,7 @@ module Config = struct
           Linker.
             {
               name = t.name;
+              link_type = t.link_type;
               command =
                 (fun ~flags ~objs ~output ->
                   List.fold_left
@@ -308,8 +328,8 @@ module Config = struct
 
     type t = {
       name : string option; [@default None]
-      path : string option;
-      output : string option; [@default None]
+      root : string option;
+      target : string option; [@default None]
       compilers : Compiler_config.t list; [@default default_compilers]
       linker : Compiler_config.t; [@default Compiler_config.clang]
       files : string list; [@default []]
@@ -326,8 +346,8 @@ module Config = struct
     let default =
       {
         name = None;
-        output = Some "a.out";
-        path = Some ".";
+        target = Some "a.out";
+        root = Some ".";
         ignore = [];
         compilers = default_compilers;
         linker = Compiler_config.clang;
@@ -379,7 +399,7 @@ module Config = struct
           let () =
             Util.log "! SKIP %s"
               (Option.value
-                 ~default:(Option.value ~default:"default" config.path)
+                 ~default:(Option.value ~default:"default" config.root)
                  config.name)
           in
           None
@@ -397,21 +417,18 @@ module Config = struct
             |> List.of_seq
           in
           let source =
-            match config.path with
+            match config.root with
             | None -> path
             | Some p -> Eio.Path.(path / p)
           in
           let output =
-            Option.map (fun output -> Eio.Path.(env#fs / output)) config.output
+            Option.map (fun output -> Eio.Path.(env#fs / output)) config.target
           in
           let name =
             match config.name with
             | Some name -> name
             | None -> (
-                match config.output with
-                | Some p -> p
-                | None -> (
-                    match config.path with Some p -> p | None -> "default"))
+                match config.target with Some p -> p | None -> "default")
           in
           let build =
             Build.v ?script:config.script ~pkgconf:config.pkgconf

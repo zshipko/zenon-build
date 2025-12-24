@@ -35,8 +35,10 @@ module Object_file = struct
 end
 
 module Linker = struct
+  type link_type = Executable | Shared | Static [@@deriving yaml]
   type t = {
     name : string;
+    link_type: link_type;
     command :
       flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
   }
@@ -53,14 +55,15 @@ module Linker = struct
     in
     cc @ [ "-o"; Eio.Path.native_exn output ] @ flags.Flags.link @ objs
 
-  let clang = { name = "clang"; command = c_like [ "clang" ] }
-  let clang_shared = { name = "clang"; command = c_like [ "clang"; "-shared" ] }
-  let clangxx = { name = "clang++"; command = c_like [ "clang++" ] }
-  let ghc = { name = "ghc"; command = c_like [ "ghc" ] }
+  let clang = { name = "clang"; command = c_like [ "clang" ]; link_type = Executable }
+  let clang_shared = { name = "clang"; command = c_like [ "clang"; "-shared" ]; link_type = Shared }
+  let clangxx = { name = "clang++"; command = c_like [ "clang++" ]; link_type = Executable }
+  let ghc = { name = "ghc"; command = c_like [ "ghc" ]; link_type = Executable }
 
   let ar =
     {
       name = "ar";
+      link_type = Static;
       command =
         (fun ~flags:_ ~objs ~output ->
           let objs =

@@ -70,7 +70,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 (Option.map
                    (fun name ->
                      Zenon.Config.Compiler_config.(
-                       linker { name; ext = []; command = None }))
+                       linker { name; ext = []; command = None; link_type = Zenon.Linker.Executable }))
                    linker);
           ] )
     | x -> (builds, x)
@@ -107,7 +107,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 Option.map
                   (fun name ->
                     Zenon.Config.Compiler_config.(
-                      linker { name; ext = []; command = None }))
+                      linker { name; ext = []; command = None; link_type = Zenon.Linker.Executable }))
                   linker
                 |> Option.value ~default:Zenon.Linker.clang;
             })
@@ -258,12 +258,7 @@ let cmake ~path ~build ~version:_ () =
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b ->
-      let c_flags =
-        Hashtbl.find_opt b.compiler_flags "c"
-        |> Option.value ~default:(Zenon.Flags.v ())
-      in
-      let _flags = Zenon.Flags.concat b.flags c_flags in
-      let _lib_name =
+      let lib_name =
         match b.output with
         | Some s ->
             let s = Eio.Path.native_exn s |> Filename.basename in
@@ -272,7 +267,22 @@ let cmake ~path ~build ~version:_ () =
             else b.name
         | None -> b.name
       in
-      failwith "TODO"
+      let c_flags =
+        Hashtbl.find_opt b.compiler_flags "c"
+        |> Option.value ~default:(Zenon.Flags.v ())
+      in
+      let cmake = Zenon.Cmake.v ~project_name:lib_name () in
+      let files = Zenon.Build.locate_source_files b |> List.map (fun f -> Eio.Path.native_exn f.Zenon.Source_file.path) in
+      let () =
+        match b.linker.link_type with
+        | Executable -> Zenon.Cmake.add_executable cmake lib_name files
+        | Shared -> Zenon.Cmake.add_library cmake ~shared:true lib_name files
+        | Static -> Zenon.Cmake.add_library cmake ~shared:false lib_name files
+      in
+      let dirs = files |> List.map Filename.dirname |> List.sort_uniq String.compare in
+      let () = Zenon.Cmake.target_include_directories cmake lib_name dirs in
+      let () = Zenon.Cmake.add_compile_definitions cmake lib_name c_flags.compile in
+      print_endline @@ Zenon.Cmake.contents cmake
 
 let cmd_cmake =
   Cmd.v (Cmd.info "cmake")

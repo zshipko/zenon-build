@@ -1,6 +1,6 @@
 (library
  (name zenon)
  (public_name zenon)
- (libraries eio_posix yaml re ocamlgraph)
+ (libraries eio_posix yaml re ocamlgraph fmt)
  (preprocess
   (pps ppx_deriving_yaml)))
