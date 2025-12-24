@@ -190,7 +190,7 @@ let cmd_run =
   let+ build = build and+ path = path and+ args = run_args in
   run ~path ~build ~args ()
 
-let pkg ~path ~prefix ~build ~version () =
+let pkg ~path ~prefix ~build ~version ?output () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
   let x =
@@ -220,9 +220,13 @@ let pkg ~path ~prefix ~build ~version () =
             else b.name
         | None -> b.name
       in
-      print_endline
-      @@ Zenon.Pkg_config.generate ~lib_name ~prefix ~version
-           ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link b.name
+      let contents =
+        Zenon.Pkg_config.generate ~lib_name ~prefix ~version
+          ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link b.name
+      in
+      match output with
+      | Some path -> Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) contents
+      | None -> print_endline contents
 
 let prefix =
   let doc = "Installation prefix" in
@@ -238,11 +242,11 @@ let cmd_pkg =
   let+ build = build
   and+ path = path
   and+ prefix = prefix
-  and+ version = version in
-  pkg ~path ~build ~prefix ~version ()
+  and+ version = version
+  and+ output = output in
+  pkg ~path ~build ~prefix ~version ?output ()
 
-
-let cmake ~path ~build ~version:_ () =
+let cmake ~path ~build ~version:_ ?output () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
   let x =
@@ -282,15 +286,19 @@ let cmake ~path ~build ~version:_ () =
       let dirs = files |> List.map Filename.dirname |> List.sort_uniq String.compare in
       let () = Zenon.Cmake.target_include_directories cmake lib_name dirs in
       let () = Zenon.Cmake.add_compile_definitions cmake lib_name c_flags.compile in
-      print_endline @@ Zenon.Cmake.contents cmake
+      let contents = Zenon.Cmake.contents cmake in
+      match output with
+      | Some path -> Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) contents
+      | None -> print_endline contents
 
 let cmd_cmake =
   Cmd.v (Cmd.info "cmake")
   @@
   let+ build = build
   and+ path = path
-  and+ version = version in
-  cmake ~path ~build ~version ()
+  and+ version = version
+  and+ output = output in
+  cmake ~path ~build ~version ?output ()
 
 let main () =
   Cmd.eval
