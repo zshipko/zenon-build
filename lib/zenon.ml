@@ -161,7 +161,7 @@ module Plan = struct
                         @@ fun () ->
                         let task =
                           Compiler.compile_obj c b.env#process_mgr ~output:obj
-                            ~sw
+                            ~sw ~build_mtime:b.mtime
                             (Flags.concat b_flags flags)
                         in
                         let () = link_flags := Flags.concat !link_flags flags in
@@ -223,21 +223,16 @@ module Config = struct
         link_type = Linker.Executable;
       }
 
-    let ghc =
-      { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
-
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
       | "ispc" -> Some Compiler.ispc
-      | "hs" | "ghc" -> Some Compiler.ghc
       | _ -> None
 
     let find_linker = function
       | "c" | "clang" -> Some Linker.clang
       | "shared" -> Some Linker.clang_shared
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Linker.clangxx
-      | "hs" | "ghc" -> Some Linker.ghc
       | "ar" | "static" -> Some Linker.ar
       | _ -> None
 
@@ -311,18 +306,12 @@ module Config = struct
     end
 
     let default_compilers =
-      [
-        Compiler_config.clang;
-        Compiler_config.clangxx;
-        Compiler_config.ispc;
-        Compiler_config.ghc;
-      ]
+      [ Compiler_config.clang; Compiler_config.clangxx; Compiler_config.ispc ]
 
     let default_linkers =
       [
         Compiler_config.clang;
         Compiler_config.clangxx;
-        Compiler_config.ghc;
         Compiler_config.{ clang with name = "ar" };
       ]
 

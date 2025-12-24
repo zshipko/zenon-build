@@ -70,7 +70,13 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 (Option.map
                    (fun name ->
                      Zenon.Config.Compiler_config.(
-                       linker { name; ext = []; command = None; link_type = Zenon.Linker.Executable }))
+                       linker
+                         {
+                           name;
+                           ext = [];
+                           command = None;
+                           link_type = Zenon.Linker.Executable;
+                         }))
                    linker);
           ] )
     | x -> (builds, x)
@@ -95,7 +101,11 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
           in
           let () = Zenon.Build.add_compile_flags build cflags in
           let () = Zenon.Build.add_link_flags build ldflags in
-          let () = Zenon.Build.add_source_files ~reset:(not (List.is_empty file)) build file in
+          let () =
+            Zenon.Build.add_source_files
+              ~reset:(not (List.is_empty file))
+              build file
+          in
           Zenon.Plan.build plan
             {
               build with
@@ -107,7 +117,13 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 Option.map
                   (fun name ->
                     Zenon.Config.Compiler_config.(
-                      linker { name; ext = []; command = None; link_type = Zenon.Linker.Executable }))
+                      linker
+                        {
+                          name;
+                          ext = [];
+                          command = None;
+                          link_type = Zenon.Linker.Executable;
+                        }))
                   linker
                 |> Option.value ~default:Zenon.Linker.clang;
             })
@@ -205,7 +221,7 @@ let pkg ~path ~prefix ~build ~version ?output () =
   in
   match b with
   | None -> Fmt.failwith "no target found"
-  | Some b ->
+  | Some b -> (
       let c_flags =
         Hashtbl.find_opt b.compiler_flags "c"
         |> Option.value ~default:(Zenon.Flags.v ())
@@ -221,12 +237,15 @@ let pkg ~path ~prefix ~build ~version ?output () =
         | None -> b.name
       in
       let contents =
-        Zenon.Pkg_config.generate ~lib_name ~prefix ~version
-          ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link b.name
+        Zenon.Pkg_config.generate ~lib_name ~prefix ~version ~requires:b.pkgconf
+          ~cflags:flags.compile ~ldflags:flags.link b.name
       in
       match output with
-      | Some path -> Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) contents
-      | None -> print_endline contents
+      | Some path ->
+          Eio.Path.save ~create:(`Or_truncate 0o644)
+            Eio.Path.(env#cwd / path)
+            contents
+      | None -> print_endline contents)
 
 let prefix =
   let doc = "Installation prefix" in
@@ -261,7 +280,7 @@ let cmake ~path ~build ~version:_ ?output () =
   in
   match b with
   | None -> Fmt.failwith "no target found"
-  | Some b ->
+  | Some b -> (
       let lib_name =
         match b.output with
         | Some s ->
@@ -276,20 +295,31 @@ let cmake ~path ~build ~version:_ ?output () =
         |> Option.value ~default:(Zenon.Flags.v ())
       in
       let cmake = Zenon.Cmake.v ~project_name:lib_name () in
-      let files = Zenon.Build.locate_source_files b |> List.map (fun f -> Eio.Path.native_exn f.Zenon.Source_file.path) in
+      let files =
+        Zenon.Build.locate_source_files b
+        |> List.map (fun f ->
+               Zenon.Util.relative_to b.source f.Zenon.Source_file.path)
+      in
       let () =
         match b.linker.link_type with
         | Executable -> Zenon.Cmake.add_executable cmake lib_name files
         | Shared -> Zenon.Cmake.add_library cmake ~shared:true lib_name files
         | Static -> Zenon.Cmake.add_library cmake ~shared:false lib_name files
       in
-      let dirs = files |> List.map Filename.dirname |> List.sort_uniq String.compare in
+      let dirs =
+        files |> List.map Filename.dirname |> List.sort_uniq String.compare
+      in
       let () = Zenon.Cmake.target_include_directories cmake lib_name dirs in
-      let () = Zenon.Cmake.add_compile_definitions cmake lib_name c_flags.compile in
+      let () =
+        Zenon.Cmake.add_compile_definitions cmake lib_name c_flags.compile
+      in
       let contents = Zenon.Cmake.contents cmake in
       match output with
-      | Some path -> Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) contents
-      | None -> print_endline contents
+      | Some path ->
+          Eio.Path.save ~create:(`Or_truncate 0o644)
+            Eio.Path.(env#cwd / path)
+            contents
+      | None -> print_endline contents)
 
 let cmd_cmake =
   Cmd.v (Cmd.info "cmake")
@@ -302,6 +332,7 @@ let cmd_cmake =
 
 let main () =
   Cmd.eval
-  @@ Cmd.group (Cmd.info "zenon") [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake ]
+  @@ Cmd.group (Cmd.info "zenon")
+       [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake ]
 
 let () = if !Sys.interactive then () else exit (main ())

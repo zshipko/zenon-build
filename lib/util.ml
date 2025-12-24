@@ -16,8 +16,9 @@ let mkparent path =
   let parent = Eio.Path.split path |> Option.map fst in
   Option.iter
     (fun p ->
-      if Eio.Path.native_exn p = "." then ()
-      else Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 p)
+      if Eio.Path.native_exn p = "." || Eio.Path.native_exn p = "" then ()
+      else if not (Eio.Path.is_directory p) then
+        Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 p)
     parent
 
 let relative_to base a =

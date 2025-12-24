@@ -25,20 +25,18 @@ module Object_file = struct
     { source; path; flags = Option.value ~default:(Flags.v ()) flags }
 
   let of_source ?flags ~build_dir source =
-    let obj_file = Util.with_ext source.Source_file.path "o" in
-    let p =
-      Eio.Path.split source.root |> Option.map fst
-      |> Option.value ~default:source.root
+    let obj_file =
+      Util.relative_to source.Source_file.root source.Source_file.path ^ ".o"
     in
-    let obj_file = Eio.Path.(build_dir / Util.relative_to p obj_file) in
-    v ?flags ~source @@ obj_file
+    v ?flags ~source @@ Eio.Path.(build_dir / obj_file)
 end
 
 module Linker = struct
   type link_type = Executable | Shared | Static [@@deriving yaml]
+
   type t = {
     name : string;
-    link_type: link_type;
+    link_type : link_type;
     command :
       flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
   }
@@ -55,10 +53,18 @@ module Linker = struct
     in
     cc @ [ "-o"; Eio.Path.native_exn output ] @ flags.Flags.link @ objs
 
-  let clang = { name = "clang"; command = c_like [ "clang" ]; link_type = Executable }
-  let clang_shared = { name = "clang"; command = c_like [ "clang"; "-shared" ]; link_type = Shared }
-  let clangxx = { name = "clang++"; command = c_like [ "clang++" ]; link_type = Executable }
-  let ghc = { name = "ghc"; command = c_like [ "ghc" ]; link_type = Executable }
+  let clang =
+    { name = "clang"; command = c_like [ "clang" ]; link_type = Executable }
+
+  let clang_shared =
+    {
+      name = "clang";
+      command = c_like [ "clang"; "-shared" ];
+      link_type = Shared;
+    }
+
+  let clangxx =
+    { name = "clang++"; command = c_like [ "clang++" ]; link_type = Executable }
 
   let ar =
     {
@@ -117,14 +123,7 @@ module Compiler = struct
       ext = String_set.of_list [ "ispc" ];
     }
 
-  let ghc =
-    {
-      name = "ghc";
-      command = c_like [ "ghc" ];
-      ext = String_set.of_list [ "hs"; "lhs" ];
-    }
-
-  let compile_obj t mgr ~sw ~output flags =
+  let compile_obj t mgr ~sw ~output ~build_mtime flags =
     let st =
       try
         Option.some
@@ -133,7 +132,7 @@ module Compiler = struct
       with _ -> None
     in
     match st with
-    | Some (obj, src) when obj.mtime > src.mtime ->
+    | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
         Util.log "• CACHE %s -> %s"
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
@@ -154,7 +153,7 @@ module Compiler_set = struct
     let compare a b = String_set.compare a.Compiler.ext b.Compiler.ext
   end)
 
-  let default = of_list Compiler.[ clang; clangxx; ispc; ghc ]
+  let default = of_list Compiler.[ clang; clangxx; ispc ]
 
   let default_ext =
     fold (fun x -> String_set.union x.ext) default String_set.empty
