@@ -85,7 +85,9 @@ module Plan = struct
           in
           let obj_node =
             Obj
-              (Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") src)
+              (Object_file.of_source ~build_name:b.name
+                 ~build_dir:Eio.Path.(b.build / "obj")
+                 src)
           in
           G.add_edge_e t.graph @@ G.E.create build_node e src_node;
           let ext = Source_file.ext src in
@@ -143,7 +145,9 @@ module Plan = struct
           match G.E.dst edge with
           | Src s as v' ->
               let obj =
-                Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") s
+                Object_file.of_source ~build_name:b.name
+                  ~build_dir:Eio.Path.(b.build / "obj")
+                  s
               in
               (s :: sources, (v', obj) :: objs)
           | _ -> (sources, objs))

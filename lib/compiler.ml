@@ -24,11 +24,11 @@ module Object_file = struct
   let v ?flags ~source path =
     { source; path; flags = Option.value ~default:(Flags.v ()) flags }
 
-  let of_source ?flags ~build_dir source =
+  let of_source ?flags ~build_name ~build_dir source =
     let obj_file =
       Util.relative_to source.Source_file.root source.Source_file.path ^ ".o"
     in
-    v ?flags ~source @@ Eio.Path.(build_dir / obj_file)
+    v ?flags ~source @@ Eio.Path.(build_dir / build_name / obj_file)
 end
 
 module Linker = struct
@@ -161,8 +161,13 @@ module Compiler = struct
                 | None -> None)
               sources
           in
+          let hidir =
+            match Eio.Path.split output.Object_file.path with
+            | None -> []
+            | Some (parent, _) -> [ "-hidir"; Eio.Path.native_exn parent ]
+          in
           [ "ghc"; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
-          @ include_paths @ flags.Flags.compile
+          @ hidir @ include_paths @ flags.Flags.compile
           @ [ Eio.Path.native_exn output.source.path ]);
       ext = String_set.of_list [ "hs"; "lhs" ];
     }
