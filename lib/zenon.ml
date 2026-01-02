@@ -239,16 +239,16 @@ module Config = struct
       { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
 
     let find_compiler = function
-      | "c" | "clang" -> Some Compiler.clang
-      | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
+      | "c" | "cc" | "clang" -> Some Compiler.clang
+      | "clang++" | "c++" | "cxx" | "cpp" -> Some Compiler.clangxx
       | "ispc" -> Some Compiler.ispc
       | "ghc" | "hs" | "lhs" -> Some Compiler.ghc
       | _ -> None
 
     let find_linker = function
-      | "c" | "clang" -> Some Linker.clang
+      | "c" | "cc" | "clang" -> Some Linker.clang
       | "shared" -> Some Linker.clang_shared
-      | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Linker.clangxx
+      | "clang++" | "c++" | "cxx" | "cpp" -> Some Linker.clangxx
       | "ar" | "static" -> Some Linker.ar
       | "ghc" | "hs" | "lhs" -> Some Linker.ghc
       | _ -> None
@@ -343,7 +343,7 @@ module Config = struct
       root : string option;
       target : string option; [@default None]
       compilers : Compiler_config.t list; [@default default_compilers]
-      linker : Compiler_config.t; [@default Compiler_config.clang]
+      linker : string; [@default Compiler_config.(clang.name)]
       files : string list; [@default []]
       ignore : string list; [@default []]
       flags : Lang_flags.t list; [@default []]
@@ -363,7 +363,7 @@ module Config = struct
         root = Some ".";
         ignore = [];
         compilers = default_compilers;
-        linker = Compiler_config.clang;
+        linker = Compiler_config.clang.name;
         files = [];
         script = None;
         after = None;
@@ -431,7 +431,16 @@ module Config = struct
           in
           None
         else
-          let linker = Compiler_config.linker config.Build_config.linker in
+          let linker =
+            Compiler_config.linker
+              Compiler_config.
+                {
+                  name = config.Build_config.linker;
+                  ext = [];
+                  link_type = Linker.Executable;
+                  command = None;
+                }
+          in
           let compilers =
             List.map Compiler_config.compiler t.compilers
             @ List.map Compiler_config.compiler config.compilers
