@@ -23,7 +23,7 @@ type t = {
 
 let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
-let obj_path t = Eio.Path.(t.build / "obj")
+let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
 let v ?build ?mtime ?(pkgconf = []) ?script ?after ?flags
     ?(linker = Linker.clang) ?compilers ?(compiler_flags = []) ?(files = [])

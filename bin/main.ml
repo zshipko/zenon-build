@@ -134,18 +134,22 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
-  let path = Eio.Path.(env#fs / path) in
-  let x =
-    match Zenon.Config.load ~env path with
-    | Ok x -> x
-    | Error (`Msg err) -> failwith err
-  in
-  let builds = Zenon.String_set.of_list builds in
-  let x =
-    if Zenon.String_set.is_empty builds then x
-    else List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x
-  in
-  List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean build) x
+  if List.is_empty builds then
+    Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
+  else
+    let path = Eio.Path.(env#fs / path) in
+    let x =
+      match Zenon.Config.load ~env path with
+      | Ok x -> x
+      | Error (`Msg err) -> failwith err
+    in
+    let builds = Zenon.String_set.of_list builds in
+    let x =
+      if Zenon.String_set.is_empty builds then x
+      else
+        List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x
+    in
+    List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean_obj build) x
 
 let cmd_build =
   Cmd.v (Cmd.info "build")
