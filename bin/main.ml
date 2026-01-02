@@ -70,7 +70,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 (Option.map
                    (fun name ->
                      Zenon.Config.Compiler_config.(
-                       linker
+                       linker []
                          {
                            name;
                            ext = [];
@@ -121,7 +121,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 Option.map
                   (fun name ->
                     Zenon.Config.Compiler_config.(
-                      linker
+                      linker []
                         {
                           name;
                           ext = [];

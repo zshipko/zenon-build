@@ -238,22 +238,30 @@ module Config = struct
     let ghc =
       { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
 
-    let find_compiler = function
-      | "c" | "cc" | "clang" -> Some Compiler.clang
-      | "clang++" | "c++" | "cxx" | "cpp" -> Some Compiler.clangxx
-      | "ispc" -> Some Compiler.ispc
-      | "ghc" | "hs" | "lhs" -> Some Compiler.ghc
-      | _ -> None
+    let find_compiler compilers c =
+      match List.find_opt (fun x -> x.Compiler.name = c) compilers with
+      | Some x -> Some x
+      | None -> (
+          match c with
+          | "c" | "cc" | "clang" -> Some Compiler.clang
+          | "clang++" | "c++" | "cxx" | "cpp" -> Some Compiler.clangxx
+          | "ispc" -> Some Compiler.ispc
+          | "ghc" | "hs" | "lhs" -> Some Compiler.ghc
+          | _ -> None)
 
-    let find_linker = function
-      | "c" | "cc" | "clang" -> Some Linker.clang
-      | "shared" -> Some Linker.clang_shared
-      | "clang++" | "c++" | "cxx" | "cpp" -> Some Linker.clangxx
-      | "ar" | "static" -> Some Linker.ar
-      | "ghc" | "hs" | "lhs" -> Some Linker.ghc
-      | _ -> None
+    let find_linker linkers l =
+      match List.find_opt (fun x -> x.Linker.name = l) linkers with
+      | Some x -> Some x
+      | None -> (
+          match l with
+          | "c" | "cc" | "clang" -> Some Linker.clang
+          | "shared" -> Some Linker.clang_shared
+          | "clang++" | "c++" | "cxx" | "cpp" -> Some Linker.clangxx
+          | "ar" | "static" -> Some Linker.ar
+          | "ghc" | "hs" | "lhs" -> Some Linker.ghc
+          | _ -> None)
 
-    let compiler t =
+    let compiler compilers t =
       match t.command with
       | Some cmd ->
           Compiler.
@@ -271,11 +279,11 @@ module Config = struct
                     [] cmd);
             }
       | None -> (
-          match find_compiler t.name with
+          match find_compiler compilers t.name with
           | None -> invalid_arg ("unknown compiler: " ^ t.name)
           | Some x -> x)
 
-    let linker t =
+    let linker linkers t =
       match t.command with
       | Some cmd ->
           Linker.
@@ -301,7 +309,7 @@ module Config = struct
                     [] cmd);
             }
       | None -> (
-          match find_linker t.name with
+          match find_linker linkers t.name with
           | None -> invalid_arg ("unknown linker: " ^ t.name)
           | Some x -> x)
   end
@@ -380,6 +388,7 @@ module Config = struct
     flags : Build_config.Lang_flags.t list; [@default []]
     compilers : Compiler_config.t list;
         [@default Build_config.default_compilers]
+    linkers : Compiler_config.t list; [@default Build_config.default_linkers]
     files : string list; [@default []]
     ignore : string list; [@default []]
     pkgconf : string list; [@default []] [@key "pkg"]
@@ -391,6 +400,7 @@ module Config = struct
       build = [];
       flags = [];
       compilers = [];
+      linkers = [];
       files = [];
       ignore = [];
       pkgconf = [];
@@ -433,6 +443,7 @@ module Config = struct
         else
           let linker =
             Compiler_config.linker
+              (List.map (Compiler_config.linker []) t.linkers)
               Compiler_config.
                 {
                   name = config.Build_config.linker;
@@ -441,9 +452,10 @@ module Config = struct
                   command = None;
                 }
           in
+          let compilers = List.map (Compiler_config.compiler []) t.compilers in
           let compilers =
-            List.map Compiler_config.compiler t.compilers
-            @ List.map Compiler_config.compiler config.compilers
+            compilers
+            @ List.map (Compiler_config.compiler compilers) config.compilers
           in
           let compiler_flags =
             List.to_seq (t.flags @ config.flags)
