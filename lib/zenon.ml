@@ -137,39 +137,47 @@ module Plan = struct
     let max = Domain.recommended_domain_count () in
     let pool = Eio.Semaphore.make max in
     let count = ref 0 in
-    let objs =
+    let sources, objs =
       G.fold_succ_e
-        (fun edge objs ->
-          Eio.Switch.run @@ fun sw ->
+        (fun edge (sources, objs) ->
           match G.E.dst edge with
-          | Src s as v' -> (
+          | Src s as v' ->
               let obj =
                 Object_file.of_source ~build_dir:Eio.Path.(b.build / "obj") s
               in
-              let obj_node = Obj obj in
-              match G.find_edge t.graph v' obj_node |> G.E.label with
-              | None -> objs
-              | Some edge' -> (
-                  match edge' with
-                  | Compiler (c, flags) ->
-                      incr count;
-                      let flags = Option.value ~default:(Flags.v ()) flags in
-                      Eio.Semaphore.acquire pool;
-                      ( Eio.Fiber.fork ~sw @@ fun () ->
-                        Fun.protect ~finally:(fun () ->
-                            Eio.Semaphore.release pool)
-                        @@ fun () ->
-                        let task =
-                          Compiler.compile_obj c b.env#process_mgr ~output:obj
-                            ~sw ~build_mtime:b.mtime
-                            (Flags.concat b_flags flags)
-                        in
-                        let () = link_flags := Flags.concat !link_flags flags in
-                        Option.iter Eio.Process.await_exn task );
-                      obj :: objs
-                  | _ -> objs))
-          | _ -> objs)
-        t.graph (Build b) []
+              (s :: sources, (v', obj) :: objs)
+          | _ -> (sources, objs))
+        t.graph (Build b) ([], [])
+    in
+    Eio.Switch.run @@ fun sw ->
+    let objs =
+      List.filter_map
+        (fun (v', obj) ->
+          let obj_node = Obj obj in
+          match G.find_edge t.graph v' obj_node |> G.E.label with
+          | None -> None
+          | Some edge' -> (
+              match edge' with
+              | Compiler (c, flags) ->
+                  incr count;
+                  let flags = Option.value ~default:(Flags.v ()) flags in
+                  Eio.Semaphore.acquire pool;
+                  let p =
+                    Eio.Fiber.fork_promise ~sw @@ fun () ->
+                    Fun.protect ~finally:(fun () -> Eio.Semaphore.release pool)
+                    @@ fun () ->
+                    let task =
+                      Compiler.compile_obj c b.env#process_mgr ~sources
+                        ~output:obj ~sw ~build_mtime:b.mtime
+                        (Flags.concat b_flags flags)
+                    in
+                    let () = link_flags := Flags.concat !link_flags flags in
+                    Option.iter Eio.Process.await_exn task
+                  in
+                  Eio.Promise.await_exn p;
+                  Some obj
+              | _ -> None))
+        objs
     in
     Option.iter
       (fun output ->
@@ -223,10 +231,14 @@ module Config = struct
         link_type = Linker.Executable;
       }
 
+    let ghc =
+      { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
+
     let find_compiler = function
       | "c" | "clang" -> Some Compiler.clang
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Compiler.clangxx
       | "ispc" -> Some Compiler.ispc
+      | "ghc" | "hs" | "lhs" -> Some Compiler.ghc
       | _ -> None
 
     let find_linker = function
@@ -234,6 +246,7 @@ module Config = struct
       | "shared" -> Some Linker.clang_shared
       | "clang++" | "c++" | "cxx" | "cc" | "cpp" -> Some Linker.clangxx
       | "ar" | "static" -> Some Linker.ar
+      | "ghc" | "hs" | "lhs" -> Some Linker.ghc
       | _ -> None
 
     let compiler t =
@@ -244,7 +257,7 @@ module Config = struct
               name = t.name;
               ext = String_set.of_list t.ext;
               command =
-                (fun ~flags ~output ->
+                (fun ~flags ~sources:_ ~output ->
                   List.fold_left
                     (fun (acc : string list) x ->
                       if String.equal x "#output" then
@@ -306,13 +319,19 @@ module Config = struct
     end
 
     let default_compilers =
-      [ Compiler_config.clang; Compiler_config.clangxx; Compiler_config.ispc ]
+      [
+        Compiler_config.clang;
+        Compiler_config.clangxx;
+        Compiler_config.ispc;
+        Compiler_config.ghc;
+      ]
 
     let default_linkers =
       [
         Compiler_config.clang;
         Compiler_config.clangxx;
         Compiler_config.{ clang with name = "ar" };
+        Compiler_config.ghc;
       ]
 
     type t = {

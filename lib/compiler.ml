@@ -77,17 +77,42 @@ module Linker = struct
           in
           [ "ar"; "rcs"; Eio.Path.native_exn output ] @ objs);
     }
+
+  let ghc =
+    {
+      name = "ghc";
+      command =
+        (fun ~flags ~objs ~output ->
+          let include_paths =
+            List.filter_map
+              (fun x ->
+                match Eio.Path.split x.Object_file.source.path with
+                | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
+                | None -> None)
+              objs
+          in
+          let objs =
+            List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+          in
+          [ "ghc"; "-o"; Eio.Path.native_exn output ]
+          @ include_paths @ flags.Flags.link @ objs);
+      link_type = Executable;
+    }
 end
 
 module Compiler = struct
   type t = {
     name : string;
-    command : flags:Flags.t -> output:Object_file.t -> string list;
+    command :
+      flags:Flags.t ->
+      sources:Source_file.t list ->
+      output:Object_file.t ->
+      string list;
     ext : String_set.t;
   }
 
   let c_like cc =
-   fun ~flags ~output ->
+   fun ~flags ~sources:_ ~output ->
     cc
     @ [ "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
     @ flags.Flags.compile
@@ -111,7 +136,7 @@ module Compiler = struct
     {
       name = "ispc";
       command =
-        (fun ~flags ~output ->
+        (fun ~flags ~sources:_ ~output ->
           [
             "ispc";
             "--emit-obj";
@@ -123,7 +148,26 @@ module Compiler = struct
       ext = String_set.of_list [ "ispc" ];
     }
 
-  let compile_obj t mgr ~sw ~output ~build_mtime flags =
+  let ghc =
+    {
+      name = "ghc";
+      command =
+        (fun ~flags ~sources ~output ->
+          let include_paths =
+            List.filter_map
+              (fun source ->
+                match Eio.Path.split source.Source_file.path with
+                | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
+                | None -> None)
+              sources
+          in
+          [ "ghc"; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
+          @ include_paths @ flags.Flags.compile
+          @ [ Eio.Path.native_exn output.source.path ]);
+      ext = String_set.of_list [ "hs"; "lhs" ];
+    }
+
+  let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
     let st =
       try
         Option.some
@@ -142,7 +186,7 @@ module Compiler = struct
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.path);
         Util.mkparent output.Object_file.path;
-        let cmd = t.command ~flags ~output in
+        let cmd = t.command ~sources ~flags ~output in
         Some (Eio.Process.spawn mgr cmd ~sw)
 end
 
