@@ -85,7 +85,7 @@ module Plan = struct
           in
           let obj_node =
             Obj
-              (Object_file.of_source ~build_name:b.name
+              (Object_file.of_source ~root:b.source ~build_name:b.name
                  ~build_dir:Eio.Path.(b.build / "obj")
                  src)
           in
@@ -145,7 +145,7 @@ module Plan = struct
           match G.E.dst edge with
           | Src s as v' ->
               let obj =
-                Object_file.of_source ~build_name:b.name
+                Object_file.of_source ~root:b.source ~build_name:b.name
                   ~build_dir:Eio.Path.(b.build / "obj")
                   s
               in
@@ -386,16 +386,17 @@ module Config = struct
     try
       let s = Eio.Path.load path in
       let y = Yaml.of_string_exn s in
-      of_yaml y
+      let st = Eio.Path.stat ~follow:true path in
+      Result.map (fun y -> (y, st.Eio.File.Stat.mtime)) @@ of_yaml y
     with exn -> Error (`Msg (Printexc.to_string exn))
 
   let rec read_file_or_default path =
     if Eio.Path.is_file path then read_file path
     else if Eio.Path.is_directory path then
       read_file_or_default Eio.Path.(path / "zenon.yaml")
-    else Ok empty
+    else Ok (empty, Unix.gettimeofday ())
 
-  let init ~env path t =
+  let init ?mtime ~env path t =
     List.filter_map
       (fun config ->
         let ok =
@@ -445,14 +446,13 @@ module Config = struct
           let build =
             Build.v ?script:config.script ~pkgconf:config.pkgconf
               ?after:config.after ~linker ~compilers ~compiler_flags ?output
-              ~source ~files:config.files ~name ~ignore:config.ignore env
+              ~source ~files:config.files ~name ~ignore:config.ignore ?mtime env
           in
           Some build)
       t.build
 
   let load ~env path =
-    let config = read_file_or_default path in
-    match config with
-    | Ok config -> Ok (init ~env path config)
+    match read_file_or_default path with
+    | Ok (config, mtime) -> Ok (init ~mtime ~env path config)
     | Error e -> Error e
 end

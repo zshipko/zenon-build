@@ -25,9 +25,9 @@ let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj")
 
-let v ?build ?(pkgconf = []) ?script ?after ?flags ?(linker = Linker.clang)
-    ?compilers ?(compiler_flags = []) ?(files = []) ?(ignore = [])
-    ?(disable_cache = false) ?output ~source ~name env =
+let v ?build ?mtime ?(pkgconf = []) ?script ?after ?flags
+    ?(linker = Linker.clang) ?compilers ?(compiler_flags = []) ?(files = [])
+    ?(ignore = []) ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler_set.default
@@ -66,7 +66,7 @@ let v ?build ?(pkgconf = []) ?script ?after ?flags ?(linker = Linker.clang)
     name;
     compiler_flags;
     disable_cache;
-    mtime = Unix.gettimeofday ();
+    mtime = Option.value ~default:(Unix.gettimeofday ()) mtime;
   }
 
 let locate_source_files t : Source_file.t list =

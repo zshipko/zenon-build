@@ -24,10 +24,8 @@ module Object_file = struct
   let v ?flags ~source path =
     { source; path; flags = Option.value ~default:(Flags.v ()) flags }
 
-  let of_source ?flags ~build_name ~build_dir source =
-    let obj_file =
-      Util.relative_to source.Source_file.root source.Source_file.path ^ ".o"
-    in
+  let of_source ?flags ~root ~build_name ~build_dir source =
+    let obj_file = Util.relative_to root source.Source_file.path ^ ".o" in
     v ?flags ~source @@ Eio.Path.(build_dir / build_name / obj_file)
 end
 
@@ -94,7 +92,7 @@ module Linker = struct
           let objs =
             List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
           in
-          [ "ghc"; "-o"; Eio.Path.native_exn output ]
+          [ "ghc"; "-v0"; "-o"; Eio.Path.native_exn output ]
           @ include_paths @ flags.Flags.link @ objs);
       link_type = Executable;
     }
@@ -166,7 +164,13 @@ module Compiler = struct
             | None -> []
             | Some (parent, _) -> [ "-hidir"; Eio.Path.native_exn parent ]
           in
-          [ "ghc"; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
+          [
+            "ghc";
+            "-v0";
+            "-c";
+            "-o";
+            Eio.Path.native_exn output.Object_file.path;
+          ]
           @ hidir @ include_paths @ flags.Flags.compile
           @ [ Eio.Path.native_exn output.source.path ]);
       ext = String_set.of_list [ "hs"; "lhs" ];
@@ -176,8 +180,8 @@ module Compiler = struct
     let st =
       try
         Option.some
-        @@ ( Eio.Path.stat ~follow:true output.Object_file.path,
-             Eio.Path.stat ~follow:true output.source.path )
+          ( Eio.Path.stat ~follow:true output.Object_file.path,
+            Eio.Path.stat ~follow:true output.source.path )
       with _ -> None
     in
     match st with
