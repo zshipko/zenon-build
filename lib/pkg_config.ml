@@ -21,7 +21,7 @@ let parse_line line : string list =
         | '\'' when not !in_dquote ->
             in_quote := true;
             acc
-        | '"' when not !in_quote ->
+        | '"' when not !in_dquote ->
             in_dquote := true;
             acc
         | c ->
@@ -58,7 +58,7 @@ let ldflags ~env names =
 let flags ~env names =
   let compile = cflags ~env names in
   let link = ldflags ~env names in
-  Compiler.Flags.v ~compile ~link ()
+  Flags.v ~compile ~link ()
 
 let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
     ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) ?lib_name

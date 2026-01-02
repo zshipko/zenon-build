@@ -1,5 +1,5 @@
 open Types
-open Compiler
+open Compiler_set
 
 type t = {
   env : Eio_posix.stdenv;
@@ -46,9 +46,7 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after ?flags
   let compiler_index = Hashtbl.create 8 in
   Compiler_set.iter
     (fun c ->
-      String_set.iter
-        (fun ext -> Hashtbl.replace compiler_index ext c)
-        c.Compiler.ext)
+      String_set.iter (fun ext -> Hashtbl.replace compiler_index ext c) c.ext)
     compilers;
   {
     pkgconf;
@@ -73,27 +71,24 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after ?flags
 
 let locate_source_files t : Source_file.t list =
   let re = Re.alt t.files |> Re.compile in
+  let ignore = Re.alt t.ignore |> Re.compile in
+  let check_ignore f =
+    match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
+  in
+  let is_special_dir name = List.mem name [ "zenon-build"; ".git"; ".jj" ] in
+
   let rec inner path =
-    let files = Eio.Path.read_dir path in
-    let ignore = Re.alt t.ignore |> Re.compile in
-    let check f =
-      match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
-    in
-    List.fold_left
-      (fun (acc : Source_file.t list) file ->
-        let f = Eio.Path.(path / file) in
-        if Eio.Path.is_directory f then
-          if
-            check file
-            && not
-                 (String.equal file "zenon-build"
-                 || String.equal file ".git" || String.equal file ".jj")
-          then inner f @ acc
-          else acc
-        else if Re.execp re (Eio.Path.native_exn f) then
-          Source_file.v ~root:t.source f :: acc
-        else acc)
-      [] files
+    let entries = Eio.Path.read_dir path in
+    List.concat_map
+      (fun name ->
+        let full_path = Eio.Path.(path / name) in
+        if Eio.Path.is_directory full_path then
+          if check_ignore name && not (is_special_dir name) then inner full_path
+          else []
+        else if Re.execp re (Eio.Path.native_exn full_path) then
+          [ Source_file.v ~root:t.source full_path ]
+        else [])
+      entries
   in
   inner t.source
 
@@ -102,9 +97,7 @@ let parse_compile_flags f =
 
 let compile_flags t =
   let f = Eio.Path.(t.source / "compile_flags.txt") in
-  if Eio.Path.is_file f then parse_compile_flags f
-  else if Eio.Path.is_file f then parse_compile_flags f
-  else []
+  if Eio.Path.is_file f then parse_compile_flags f else []
 
 let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
 

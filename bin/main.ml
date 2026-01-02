@@ -1,5 +1,6 @@
 open Cmdliner
 open Cmdliner.Term.Syntax
+open Zenon
 
 let path =
   let doc = "Root directory" in
@@ -52,7 +53,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) () =
   Eio_posix.run @@ fun env ->
   let x =
-    match Zenon.Config.load ~env Eio.Path.(env#fs / path) with
+    match Config.load ~env Eio.Path.(env#fs / path) with
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
@@ -61,21 +62,21 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     | [] ->
         ( [ "default" ],
           [
-            Zenon.Build.v env ~ignore ~pkgconf:pkg
-              ~flags:(Zenon.Flags.v ~compile:cflags ~link:ldflags ())
+            Build.v env ~ignore ~pkgconf:pkg
+              ~flags:(Flags.v ~compile:cflags ~link:ldflags ())
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default"
               ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
               ?linker:
                 (Option.map
                    (fun name ->
-                     Zenon.Config.Compiler_config.(
+                     Config.Compiler_config.(
                        linker []
                          {
                            name;
                            ext = [];
                            command = None;
-                           link_type = Zenon.Linker.Executable;
+                           link_type = Linker.Executable;
                          }))
                    linker);
           ] )
@@ -84,57 +85,51 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
   let builds =
     if List.is_empty builds then
       List.filter_map
-        (fun x ->
-          if x.Zenon.Build.hidden then None else Some x.Zenon.Build.name)
+        (fun x -> if x.Build.hidden then None else Some x.Build.name)
         x
     else builds
   in
-  let builds = Zenon.String_set.of_list builds in
-  let plan = Zenon.Plan.v () in
+  let builds = String_set.of_list builds in
+  let plan = Plan.v () in
   let () =
     List.iter
       (fun build ->
-        if
-          Zenon.String_set.is_empty builds
-          || Zenon.String_set.mem build.Zenon.Build.name builds
+        if String_set.is_empty builds || String_set.mem build.Build.name builds
         then
           let output =
             match output with
-            | None -> build.Zenon.Build.output
+            | None -> build.Build.output
             | Some output -> Some Eio.Path.(env#cwd / output)
           in
-          let () = Zenon.Build.add_compile_flags build cflags in
-          let () = Zenon.Build.add_link_flags build ldflags in
+          let () = Build.add_compile_flags build cflags in
+          let () = Build.add_link_flags build ldflags in
           let () =
-            Zenon.Build.add_source_files
-              ~reset:(not (List.is_empty file))
-              build file
+            Build.add_source_files ~reset:(not (List.is_empty file)) build file
           in
-          Zenon.Plan.build plan
+          Plan.build plan
             {
               build with
-              pkgconf = build.Zenon.Build.pkgconf @ pkg;
-              ignore =
-                build.Zenon.Build.ignore @ List.map Zenon.Util.glob ignore;
+              pkgconf = build.Build.pkgconf @ pkg;
+              ignore = build.Build.ignore @ List.map Util.glob ignore;
               output;
               linker =
                 Option.map
                   (fun name ->
-                    Zenon.Config.Compiler_config.(
+                    Config.Compiler_config.(
                       linker []
                         {
                           name;
                           ext = [];
                           command = None;
-                          link_type = Zenon.Linker.Executable;
+                          link_type = Linker.Executable;
                         }))
                   linker
-                |> Option.value ~default:Zenon.Linker.clang;
+                |> Option.value ~default:Linker.clang;
             })
       x
   in
-  Zenon.Plan.run_all ~execute:run ~args:arg plan
-    (List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x)
+  Plan.run_all ~execute:run ~args:arg plan
+    (List.filter (fun b -> String_set.mem b.Build.name builds) x)
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
@@ -143,17 +138,16 @@ let clean ~path ~builds () =
   else
     let path = Eio.Path.(env#fs / path) in
     let x =
-      match Zenon.Config.load ~env path with
+      match Config.load ~env path with
       | Ok x -> x
       | Error (`Msg err) -> failwith err
     in
-    let builds = Zenon.String_set.of_list builds in
+    let builds = String_set.of_list builds in
     let x =
-      if Zenon.String_set.is_empty builds then x
-      else
-        List.filter (fun b -> Zenon.String_set.mem b.Zenon.Build.name builds) x
+      if String_set.is_empty builds then x
+      else List.filter (fun b -> String_set.mem b.Build.name builds) x
     in
-    List.iter (fun (build : Zenon.Build.t) -> Zenon.Build.clean_obj build) x
+    List.iter (fun (build : Build.t) -> Build.clean_obj build) x
 
 let cmd_build =
   Cmd.v (Cmd.info "build")
@@ -190,13 +184,13 @@ let run ~path ~build ~args () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
   let x =
-    match Zenon.Config.load ~env path with
+    match Config.load ~env path with
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
   let b =
     match build with
-    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
     | None -> ( try Some (List.hd x) with _ -> None)
   in
   match b with
@@ -218,13 +212,13 @@ let pkg ~path ~prefix ~build ~version ?output () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
   let x =
-    match Zenon.Config.load ~env path with
+    match Config.load ~env path with
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
   let b =
     match build with
-    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
     | None -> ( try Some (List.hd x) with _ -> None)
   in
   match b with
@@ -232,9 +226,9 @@ let pkg ~path ~prefix ~build ~version ?output () =
   | Some b -> (
       let c_flags =
         Hashtbl.find_opt b.compiler_flags "c"
-        |> Option.value ~default:(Zenon.Flags.v ())
+        |> Option.value ~default:(Flags.v ())
       in
-      let flags = Zenon.Flags.concat b.flags c_flags in
+      let flags = Flags.concat b.flags c_flags in
       let lib_name =
         match b.output with
         | Some s ->
@@ -245,7 +239,7 @@ let pkg ~path ~prefix ~build ~version ?output () =
         | None -> b.name
       in
       let contents =
-        Zenon.Pkg_config.generate ~lib_name ~prefix ~version ~requires:b.pkgconf
+        Pkg_config.generate ~lib_name ~prefix ~version ~requires:b.pkgconf
           ~cflags:flags.compile ~ldflags:flags.link b.name
       in
       match output with
@@ -277,13 +271,13 @@ let cmake ~path ~build ~version:_ ?output () =
   Eio_posix.run @@ fun env ->
   let path = Eio.Path.(env#fs / path) in
   let x =
-    match Zenon.Config.load ~env path with
+    match Config.load ~env path with
     | Ok x -> x
     | Error (`Msg err) -> failwith err
   in
   let b =
     match build with
-    | Some build -> List.find_opt (fun b -> b.Zenon.Build.name = build) x
+    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
     | None -> ( try Some (List.hd x) with _ -> None)
   in
   match b with
@@ -300,28 +294,25 @@ let cmake ~path ~build ~version:_ ?output () =
       in
       let c_flags =
         Hashtbl.find_opt b.compiler_flags "c"
-        |> Option.value ~default:(Zenon.Flags.v ())
+        |> Option.value ~default:(Flags.v ())
       in
-      let cmake = Zenon.Cmake.v ~project_name:lib_name () in
+      let cmake = Cmake.v ~project_name:lib_name () in
       let files =
-        Zenon.Build.locate_source_files b
-        |> List.map (fun f ->
-               Zenon.Util.relative_to b.source f.Zenon.Source_file.path)
+        Build.locate_source_files b
+        |> List.map (fun f -> Util.relative_to b.source f.Source_file.path)
       in
       let () =
         match b.linker.link_type with
-        | Executable -> Zenon.Cmake.add_executable cmake lib_name files
-        | Shared -> Zenon.Cmake.add_library cmake ~shared:true lib_name files
-        | Static -> Zenon.Cmake.add_library cmake ~shared:false lib_name files
+        | Executable -> Cmake.add_executable cmake lib_name files
+        | Shared -> Cmake.add_library cmake ~shared:true lib_name files
+        | Static -> Cmake.add_library cmake ~shared:false lib_name files
       in
       let dirs =
         files |> List.map Filename.dirname |> List.sort_uniq String.compare
       in
-      let () = Zenon.Cmake.target_include_directories cmake lib_name dirs in
-      let () =
-        Zenon.Cmake.add_compile_definitions cmake lib_name c_flags.compile
-      in
-      let contents = Zenon.Cmake.contents cmake in
+      let () = Cmake.target_include_directories cmake lib_name dirs in
+      let () = Cmake.add_compile_definitions cmake lib_name c_flags.compile in
+      let contents = Cmake.contents cmake in
       match output with
       | Some path ->
           Eio.Path.save ~create:(`Or_truncate 0o644)
