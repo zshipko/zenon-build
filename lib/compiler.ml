@@ -88,7 +88,7 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
         (Eio.Path.native_exn output.Object_file.path);
       None
   | _ ->
-      Util.log "• BUILD(%s) %s -> %s" t.name
+      Util.log "• COMPILE(%s) %s -> %s" t.name
         (Eio.Path.native_exn output.source.path)
         (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;

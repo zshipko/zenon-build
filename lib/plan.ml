@@ -127,7 +127,7 @@ let build t (b : Build.t) =
     source_files
 
 let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
-  Util.log "◎ RUN %s" b.name;
+  Util.log "◎ BUILD %s" b.name;
   Option.iter
     (fun s ->
       Util.log "• SCRIPT %s" s;
