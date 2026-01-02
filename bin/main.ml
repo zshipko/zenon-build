@@ -82,7 +82,11 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     | x -> (builds, x)
   in
   let builds =
-    if List.is_empty builds then List.map (fun x -> x.Zenon.Build.name) x
+    if List.is_empty builds then
+      List.filter_map
+        (fun x ->
+          if x.Zenon.Build.hidden then None else Some x.Zenon.Build.name)
+        x
     else builds
   in
   let builds = Zenon.String_set.of_list builds in

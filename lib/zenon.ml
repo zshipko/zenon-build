@@ -352,6 +352,7 @@ module Config = struct
       disable_cache : bool; [@default false]
       only_if : string option; [@default None] [@key "if"]
       pkgconf : string list; [@default []] [@key "pkg"]
+      hidden : bool; [@default false]
     }
     [@@deriving yaml]
 
@@ -370,17 +371,30 @@ module Config = struct
         disable_cache = false;
         only_if = None;
         pkgconf = [];
+        hidden = false;
       }
   end
 
   type t = {
     build : Build_config.t list;
     flags : Build_config.Lang_flags.t list; [@default []]
-    compilers : Compiler_config.t list; [@default Build_config.default_compilers]
+    compilers : Compiler_config.t list;
+        [@default Build_config.default_compilers]
+    files : string list; [@default []]
+    ignore : string list; [@default []]
+    pkgconf : string list; [@default []] [@key "pkg"]
   }
   [@@deriving yaml]
 
-  let empty = { build = []; flags = []; compilers = [] }
+  let empty =
+    {
+      build = [];
+      flags = [];
+      compilers = [];
+      files = [];
+      ignore = [];
+      pkgconf = [];
+    }
 
   let read_file path =
     try
@@ -444,9 +458,12 @@ module Config = struct
                 match config.target with Some p -> p | None -> "default")
           in
           let build =
-            Build.v ?script:config.script ~pkgconf:config.pkgconf
+            Build.v ?script:config.script
+              ~pkgconf:(t.pkgconf @ config.pkgconf)
               ?after:config.after ~linker ~compilers ~compiler_flags ?output
-              ~source ~files:config.files ~name ~ignore:config.ignore ?mtime env
+              ~source ~files:(t.files @ config.files) ~name
+              ~ignore:(t.ignore @ config.ignore) ~hidden:config.hidden ?mtime
+              env
           in
           Some build)
       t.build

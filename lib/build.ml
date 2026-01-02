@@ -3,6 +3,7 @@ open Compiler
 
 type t = {
   env : Eio_posix.stdenv;
+  hidden : bool;
   source : path;
   build : path;
   compiler_index : (string, Compiler.t) Hashtbl.t;
@@ -25,7 +26,7 @@ let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
-let v ?build ?mtime ?(pkgconf = []) ?script ?after ?flags
+let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after ?flags
     ?(linker = Linker.clang) ?compilers ?(compiler_flags = []) ?(files = [])
     ?(ignore = []) ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
@@ -67,6 +68,7 @@ let v ?build ?mtime ?(pkgconf = []) ?script ?after ?flags
     compiler_flags;
     disable_cache;
     mtime = Option.value ~default:(Unix.gettimeofday ()) mtime;
+    hidden;
   }
 
 let locate_source_files t : Source_file.t list =
