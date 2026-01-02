@@ -75,8 +75,8 @@ let find_by_name linkers l =
   | None -> (
       match l with
       | "c" | "cc" | "clang" -> Some clang
-      | "shared" -> Some clang_shared
+      | "shared" | "so" | "dylib" -> Some clang_shared
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
-      | "ar" | "static" -> Some ar
+      | "ar" | "static" | "staticlib" -> Some ar
       | "ghc" | "hs" | "lhs" -> Some ghc
       | _ -> None)

@@ -118,7 +118,7 @@ module Build_config = struct
     root : string option;
     target : string option; [@default None]
     compilers : Compiler_config.t list; [@default default_compilers]
-    linker : string; [@default Compiler_config.(clang.name)]
+    linker : string option; [@default None]
     files : string list; [@default []]
     ignore : string list; [@default []]
     flags : Lang_flags.t list; [@default []]
@@ -138,7 +138,7 @@ module Build_config = struct
       root = Some ".";
       ignore = [];
       compilers = default_compilers;
-      linker = Compiler_config.clang.name;
+      linker = None;
       files = [];
       script = None;
       after = None;
@@ -207,12 +207,25 @@ let init ?mtime ~env path t =
         in
         None
       else
+        let linker_name =
+          match config.Build_config.linker with
+          | Some linker -> linker (* Specified, so use it *)
+          | None -> (
+              (* Not specified, use default logic *)
+              match config.target with
+              | Some target
+                when String.starts_with ~prefix:"lib"
+                       (Filename.basename target)
+                     && String.ends_with ~suffix:".a" (Filename.basename target)
+                -> "ar"
+              | _ -> Compiler_config.clang.name)
+        in
         let linker =
           Compiler_config.linker
             (List.map (Compiler_config.linker []) t.linkers)
             Compiler_config.
               {
-                name = config.Build_config.linker;
+                name = linker_name;
                 ext = [];
                 link_type = Linker.Executable;
                 command = None;
