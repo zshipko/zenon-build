@@ -55,6 +55,8 @@ module G = Make (struct
     Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
 end)
 
+module Topo = Graph.Topological.Make (G)
+
 type t = { graph : G.t }
 
 let v () = { graph = G.create () }
@@ -203,4 +205,46 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
           (Eio.Path.native_exn exe :: execute_args)
 
 let run_all ?execute ?args t builds =
-  List.iter (run_build ?execute ?execute_args:args t) builds
+  let build_map =
+    List.fold_left
+      (fun acc (build : Build.t) ->
+        if Hashtbl.mem acc build.name then
+          Fmt.failwith "Duplicate build name: %s" build.name;
+        Hashtbl.add acc build.name build;
+        acc)
+      (Hashtbl.create (List.length builds))
+      builds
+  in
+
+  (* Add build dependency edges to the existing graph *)
+  List.iter
+    (fun build ->
+      List.iter
+        (fun dep_name ->
+          match Hashtbl.find_opt build_map dep_name with
+          | Some dep_build ->
+              (* Edge from dependency to dependent: dep_build -> build *)
+              G.add_edge t.graph (Build dep_build) (Build build)
+          | None ->
+              Fmt.failwith "Build '%s' depends on unknown build '%s'" build.name
+                dep_name)
+        build.depends_on)
+    builds;
+
+  let sorted_vertices =
+    try Topo.fold (fun v acc -> v :: acc) t.graph []
+    with _ ->
+      Fmt.failwith "Circular dependency detected in build dependencies"
+  in
+
+  (* Execute builds in order *)
+  let executed = Hashtbl.create (List.length builds) in
+  List.iter
+    (fun value ->
+      match value with
+      | Build b ->
+          if not (Hashtbl.mem executed b.name) then (
+            Hashtbl.add executed b.name ();
+            run_build ?execute ?execute_args:args t b)
+      | _ -> ())
+    (List.rev sorted_vertices)

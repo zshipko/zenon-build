@@ -49,6 +49,17 @@ let linker =
   let doc = "Linker name" in
   Arg.(value & opt (some string) None & info [ "linker" ] ~doc ~docv:"LINKER")
 
+let rec collect_dependencies build_map name visited =
+  if String_set.mem name visited then visited
+  else
+    let visited = String_set.add name visited in
+    match Hashtbl.find_opt build_map name with
+    | None -> visited
+    | Some build ->
+        List.fold_left
+          (fun acc dep -> collect_dependencies build_map dep acc)
+          visited build.Build.depends_on
+
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) () =
   Eio_posix.run @@ fun env ->
@@ -89,12 +100,25 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
         x
     else builds
   in
-  let builds = String_set.of_list builds in
+  (* Collect all transitive dependencies *)
+  let build_map =
+    List.fold_left
+      (fun acc b -> Hashtbl.add acc b.Build.name b; acc)
+      (Hashtbl.create (List.length x))
+      x
+  in
+  let builds_with_deps =
+    List.fold_left
+      (fun acc name -> collect_dependencies build_map name acc)
+      String_set.empty builds
+  in
   let plan = Plan.v () in
   let () =
     List.iter
       (fun build ->
-        if String_set.is_empty builds || String_set.mem build.Build.name builds
+        if
+          String_set.is_empty builds_with_deps
+          || String_set.mem build.Build.name builds_with_deps
         then
           let output =
             match output with
@@ -124,12 +148,12 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                           link_type = Linker.Executable;
                         }))
                   linker
-                |> Option.value ~default:Linker.clang;
+                |> Option.value ~default:build.Build.linker;
             })
       x
   in
   Plan.run_all ~execute:run ~args:arg plan
-    (List.filter (fun b -> String_set.mem b.Build.name builds) x)
+    (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps) x)
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->

@@ -11,6 +11,7 @@ type t = {
   linker : Linker.t;
   script : string option;
   after : string option;
+  depends_on : string list;
   name : string;
   pkgconf : string list;
   ignore : Re.t list;
@@ -26,9 +27,10 @@ let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
-let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after ?flags
-    ?(linker = Linker.clang) ?compilers ?(compiler_flags = []) ?(files = [])
-    ?(ignore = []) ?(disable_cache = false) ?output ~source ~name env =
+let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
+    ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
+    ?(compiler_flags = []) ?(files = []) ?(ignore = []) ?(disable_cache = false)
+    ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler_set.default
@@ -59,6 +61,7 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after ?flags
     files = List.map Util.glob_path files;
     script;
     after;
+    depends_on;
     flags = Option.value ~default:(Flags.v ()) flags;
     output;
     ignore = List.map Util.glob_path ignore;

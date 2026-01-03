@@ -124,6 +124,7 @@ module Build_config = struct
     flags : Lang_flags.t list; [@default []]
     script : string option; [@default None]
     after : string option; [@default None]
+    depends_on : string list; [@default []] [@key "depends-on"]
     disable_cache : bool; [@default false]
     only_if : string option; [@default None] [@key "if"]
     pkgconf : string list; [@default []] [@key "pkg"]
@@ -142,6 +143,7 @@ module Build_config = struct
       files = [];
       script = None;
       after = None;
+      depends_on = [];
       flags = [];
       disable_cache = false;
       only_if = None;
@@ -207,6 +209,13 @@ let init ?mtime ~env path t =
         in
         None
       else
+        (* Build compilers list first *)
+        let compilers = List.map (Compiler_config.compiler []) t.compilers in
+        let compilers =
+          compilers
+          @ List.map (Compiler_config.compiler compilers) config.compilers
+        in
+        (* Select linker based on compilers and target *)
         let linker_name =
           match config.Build_config.linker with
           | Some linker -> linker (* Specified, so use it *)
@@ -214,11 +223,16 @@ let init ?mtime ~env path t =
               (* Not specified, use default logic *)
               match config.target with
               | Some target
-                when String.starts_with ~prefix:"lib"
-                       (Filename.basename target)
+                when String.starts_with ~prefix:"lib" (Filename.basename target)
                      && String.ends_with ~suffix:".a" (Filename.basename target)
-                -> "ar"
-              | _ -> Compiler_config.clang.name)
+                ->
+                  "ar"
+              | _ ->
+                  (* Check if ghc is in the compilers list *)
+                  if
+                    List.exists (fun (c : Compiler.t) -> c.name = "ghc") compilers
+                  then "ghc"
+                  else Compiler_config.clang.name)
         in
         let linker =
           Compiler_config.linker
@@ -230,11 +244,6 @@ let init ?mtime ~env path t =
                 link_type = Linker.Executable;
                 command = None;
               }
-        in
-        let compilers = List.map (Compiler_config.compiler []) t.compilers in
-        let compilers =
-          compilers
-          @ List.map (Compiler_config.compiler compilers) config.compilers
         in
         let compiler_flags =
           List.to_seq (t.flags @ config.flags)
@@ -258,9 +267,10 @@ let init ?mtime ~env path t =
         let build =
           Build.v ?script:config.script
             ~pkgconf:(t.pkgconf @ config.pkgconf)
-            ?after:config.after ~linker ~compilers ~compiler_flags ?output
-            ~source ~files:(t.files @ config.files) ~name
-            ~ignore:(t.ignore @ config.ignore) ~hidden:config.hidden ?mtime env
+            ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
+            ~compiler_flags ?output ~source ~files:(t.files @ config.files)
+            ~name ~ignore:(t.ignore @ config.ignore) ~hidden:config.hidden
+            ?mtime env
         in
         Some build)
     t.build
