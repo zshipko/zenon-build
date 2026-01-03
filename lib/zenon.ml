@@ -11,3 +11,4 @@ module Pkg_config = Pkg_config
 module Cmake = Cmake
 module Plan = Plan
 module Config = Config
+module Print = Print

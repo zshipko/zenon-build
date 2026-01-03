@@ -355,9 +355,61 @@ let cmd_cmake =
   and+ output = output in
   cmake ~path ~build ~version ?output ()
 
+let graph ~path ~builds ?output () =
+  Eio_posix.run @@ fun env ->
+  let x =
+    match Config.load ~env Eio.Path.(env#fs / path) with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  let builds =
+    if List.is_empty builds then
+      List.filter_map
+        (fun x -> if x.Build.hidden then None else Some x.Build.name)
+        x
+    else builds
+  in
+  (* Collect all transitive dependencies *)
+  let build_map =
+    List.fold_left
+      (fun acc b ->
+        Hashtbl.add acc b.Build.name b;
+        acc)
+      (Hashtbl.create (List.length x))
+      x
+  in
+  let builds_with_deps =
+    List.fold_left
+      (fun acc name -> collect_dependencies build_map name acc)
+      String_set.empty builds
+  in
+  let plan = Plan.v () in
+  let () =
+    List.iter
+      (fun build ->
+        if
+          String_set.is_empty builds_with_deps
+          || String_set.mem build.Build.name builds_with_deps
+        then Plan.build plan build)
+      x
+  in
+  let dot = Print.to_dot plan in
+  match output with
+  | Some path ->
+      Eio.Path.save ~create:(`Or_truncate 0o644)
+        Eio.Path.(env#cwd / path)
+        dot
+  | None -> print_endline dot
+
+let cmd_graph =
+  Cmd.v (Cmd.info "graph" ~doc:"Generate DOT graph of build dependencies")
+  @@
+  let+ builds = builds and+ path = path and+ output = output in
+  graph ~path ~builds ?output ()
+
 let main () =
   Cmd.eval
   @@ Cmd.group (Cmd.info "zenon")
-       [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake ]
+       [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake; cmd_graph ]
 
 let () = if !Sys.interactive then () else exit (main ())
