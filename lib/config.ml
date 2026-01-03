@@ -15,6 +15,14 @@ module Compiler_config = struct
   let clang =
     { name = "clang"; ext = []; command = None; link_type = Linker.Executable }
 
+  let flang =
+    {
+      name = "flang-new";
+      ext = [];
+      command = None;
+      link_type = Linker.Executable;
+    }
+
   let ispc =
     { name = "ispc"; ext = []; command = None; link_type = Linker.Executable }
 
@@ -33,7 +41,7 @@ module Compiler_config = struct
     { name = "mlton"; ext = []; command = None; link_type = Linker.Executable }
 
   let ats2 =
-    { name = "ats2"; ext = []; command = None; link_type = Linker.Executable }
+    { name = "patscc"; ext = []; command = None; link_type = Linker.Executable }
 
   let compiler compilers t =
     match t.command with
@@ -64,6 +72,8 @@ module Compiler_config = struct
           {
             name = t.name;
             link_type = t.link_type;
+            exts = String_set.of_list t.ext;
+            has_runtime = false;
             command =
               (fun ~flags ~objs ~output ->
                 List.fold_left
@@ -150,6 +160,7 @@ let default_compilers =
   [
     Compiler_config.clang;
     Compiler_config.clangxx;
+    Compiler_config.flang;
     Compiler_config.ispc;
     Compiler_config.ghc;
     Compiler_config.mlton;
@@ -160,6 +171,7 @@ let default_linkers =
   [
     Compiler_config.clang;
     Compiler_config.clangxx;
+    Compiler_config.flang;
     Compiler_config.{ clang with name = "ar" };
     Compiler_config.ghc;
     Compiler_config.mlton;
@@ -230,11 +242,15 @@ let init ?mtime ~env path t =
         in
         None
       else
-        let compilers = List.map (Compiler_config.compiler []) t.compilers in
+        let global_compilers =
+          List.map (Compiler_config.compiler []) t.compilers
+        in
+        let all_compilers = global_compilers @ Compiler.all in
         let compilers =
-          compilers
-          @ List.filter_map
-              (fun name -> Compiler.find_by_name compilers name)
+          if List.is_empty config.compilers then global_compilers
+          else
+            List.filter_map
+              (fun name -> Compiler.find_by_name all_compilers name)
               config.compilers
         in
         let linker_name =
@@ -245,6 +261,14 @@ let init ?mtime ~env path t =
               | Some target when Util.is_static_lib (Filename.basename target)
                 ->
                   "ar"
+              | Some target when Util.is_shared_lib (Filename.basename target)
+                ->
+                  let has_cxx =
+                    List.exists
+                      (fun name -> name = "clang++" || name = "g++")
+                      config.compilers
+                  in
+                  if has_cxx then "clang++-shared" else "clang-shared"
               | _ -> Compiler_config.clang.name)
         in
         let linker =
@@ -269,7 +293,11 @@ let init ?mtime ~env path t =
           match config.root with None -> path | Some p -> Eio.Path.(path / p)
         in
         let output =
-          Option.map (fun output -> Eio.Path.(env#fs / output)) config.target
+          Option.map
+            (fun output ->
+              let normalized = Util.normalize_shared_lib_ext output in
+              Eio.Path.(env#fs / normalized))
+            config.target
         in
         let name =
           match config.name with

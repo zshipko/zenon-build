@@ -43,6 +43,25 @@ let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
   && String.ends_with ~suffix:".a" filename
 
+let is_shared_lib (filename : string) =
+  String.starts_with ~prefix:"lib" filename
+  && (String.ends_with ~suffix:".so" filename
+     || String.ends_with ~suffix:".dylib" filename)
+
+let normalize_shared_lib_ext (filename : string) =
+  (* Convert .so to .dylib on macOS, leave others unchanged *)
+  if Sys.os_type = "Unix" && String.ends_with ~suffix:".so" filename then
+    (* Check if we're on macOS by looking at uname *)
+    try
+      let ic = Unix.open_process_in "uname -s" in
+      let uname = input_line ic in
+      let _ = close_in ic in
+      if String.trim uname = "Darwin" then
+        Filename.remove_extension filename ^ ".dylib"
+      else filename
+    with _ -> filename
+  else filename
+
 let parse_gitignore path =
   if Eio.Path.is_file path then
     Eio.Path.with_lines path @@ fun lines ->

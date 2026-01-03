@@ -11,6 +11,8 @@ type link_type =
 type t = {
   name : string;
   link_type : link_type;
+  exts : String_set.t;
+  has_runtime : bool;
   command :
     flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
 }
@@ -28,31 +30,64 @@ let c_like cc =
   cc @ [ "-o"; Eio.Path.native_exn output ] @ flags.Flags.link @ objs
 
 let clang =
-  { name = "clang"; command = c_like [ "clang" ]; link_type = Executable }
+  {
+    name = "clang";
+    exts = String_set.empty;
+    has_runtime = false;
+    command = c_like [ "clang" ];
+    link_type = Executable;
+  }
 
 let clang_shared =
   {
     name = "clang";
+    exts = String_set.empty;
+    has_runtime = false;
     command = c_like [ "clang"; "-shared" ];
     link_type = Shared;
   }
 
 let clangxx =
-  { name = "clang++"; command = c_like [ "clang++" ]; link_type = Executable }
+  {
+    name = "clang++";
+    exts = Compiler.clangxx.ext;
+    has_runtime = true;
+    command = c_like [ "clang++" ];
+    link_type = Executable;
+  }
 
 let clangxx_shared =
   {
     name = "clang++";
+    exts = Compiler.clangxx.ext;
+    has_runtime = true;
     command = c_like [ "clang++"; "-shared" ];
     link_type = Shared;
   }
 
-let ape =
-  { name = "apelink"; command = c_like [ "apelink" ]; link_type = Executable }
+let cosmocc =
+  {
+    name = "cosmocc";
+    exts = String_set.empty;
+    has_runtime = false;
+    command = c_like [ "cosmocc" ];
+    link_type = Executable;
+  }
+
+let cosmocxx =
+  {
+    name = "cosmoc++";
+    exts = String_set.empty;
+    has_runtime = false;
+    command = c_like [ "cosmoc++" ];
+    link_type = Executable;
+  }
 
 let ar =
   {
     name = "ar";
+    exts = String_set.empty;
+    has_runtime = false;
     link_type = Static;
     command =
       (fun ~flags:_ ~objs ~output ->
@@ -65,6 +100,8 @@ let ar =
 let ghc =
   {
     name = "ghc";
+    exts = Compiler.ghc.ext;
+    has_runtime = true;
     command =
       (fun ~flags ~objs ~output ->
         let include_paths =
@@ -86,12 +123,14 @@ let ghc =
 let mlton =
   {
     name = "mlton";
+    exts = Compiler.mlton.ext;
+    has_runtime = true;
     command =
       (fun ~flags ~objs ~output ->
         let objs =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
-        [ "mlton"; "-o"; Eio.Path.native_exn output ]
+        [ "mlton"; "-output"; Eio.Path.native_exn output ]
         @ (List.map (fun x -> [ "-link-opt"; x ]) flags.Flags.link
           |> List.flatten)
         @ objs);
@@ -99,20 +138,94 @@ let mlton =
   }
 
 let ats2 =
-  { name = "patscc"; command = c_like [ "patscc" ]; link_type = Executable }
+  {
+    name = "patscc";
+    exts = Compiler.ats2.ext;
+    has_runtime = false;
+    command = c_like [ "patscc" ];
+    link_type = Executable;
+  }
 
 let flang =
   {
     name = "flang-new";
+    exts = Compiler.flang.ext;
+    has_runtime = false;
     command = c_like [ "flang-new" ];
     link_type = Executable;
   }
 
-let gcc = { name = "gcc"; command = c_like [ "gcc" ]; link_type = Executable }
-let gxx = { name = "g++"; command = c_like [ "g++" ]; link_type = Executable }
+let gcc =
+  {
+    name = "gcc";
+    exts = Compiler.gcc.ext;
+    has_runtime = false;
+    command = c_like [ "gcc" ];
+    link_type = Executable;
+  }
+
+let gxx =
+  {
+    name = "g++";
+    exts = Compiler.gxx.ext;
+    has_runtime = true;
+    command = c_like [ "g++" ];
+    link_type = Executable;
+  }
+
+let gcc_shared =
+  {
+    name = "gcc";
+    exts = Compiler.gcc.ext;
+    has_runtime = false;
+    command = c_like [ "gcc"; "-shared" ];
+    link_type = Shared;
+  }
+
+let gxx_shared =
+  {
+    name = "g++";
+    exts = Compiler.gxx.ext;
+    has_runtime = true;
+    command = c_like [ "g++"; "-shared" ];
+    link_type = Shared;
+  }
 
 let gfortran =
-  { name = "gfortran"; command = c_like [ "gfortran" ]; link_type = Executable }
+  {
+    name = "gfortran";
+    exts = Compiler.gfortran.ext;
+    has_runtime = false;
+    command = c_like [ "gfortran" ];
+    link_type = Executable;
+  }
+
+let gfortran_shared =
+  {
+    name = "gfortran";
+    exts = Compiler.gfortran.ext;
+    has_runtime = false;
+    command = c_like [ "gfortran"; "-shared" ];
+    link_type = Executable;
+  }
+
+let all =
+  [
+    clang;
+    clang_shared;
+    clangxx;
+    clangxx_shared;
+    ar;
+    ghc;
+    mlton;
+    ats2;
+    flang;
+    cosmocc;
+    cosmocxx;
+    gcc;
+    gxx;
+    gfortran;
+  ]
 
 let find_by_name linkers l =
   match List.find_opt (fun x -> x.name = l) linkers with
@@ -120,16 +233,38 @@ let find_by_name linkers l =
   | None -> (
       match l with
       | "c" | "cc" | "clang" -> Some clang
-      | "shared" | "so" | "dylib" -> Some clang_shared
+      | "clang-shared" | "shared" | "so" | "dylib" -> Some clang_shared
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
       | "clang++-shared" -> Some clangxx_shared
       | "ar" | "static" | "staticlib" -> Some ar
       | "ghc" | "hs" | "lhs" -> Some ghc
       | "flang-new" | "flang" | "fortran" -> Some flang
       | "gcc" -> Some gcc
-      | "g++" | "gxx" -> Some gxx
+      | "g++" -> Some gxx
+      | "g++-shared" -> Some gxx_shared
       | "gfortran" -> Some gfortran
-      | "ape" | "apelink" -> Some ape
+      | "cosmocc" -> Some cosmocc
+      | "cosmoc++" -> Some cosmocxx
       | "sml" | "mlton" -> Some mlton
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | _ -> None)
+
+let auto_select_linker ~source_exts linkers =
+  (* Find all linkers that match the source extensions *)
+  let matching_linkers =
+    List.filter
+      (fun linker ->
+        linker.has_runtime
+        && not (String_set.is_empty (String_set.inter linker.exts source_exts)))
+      linkers
+  in
+  match matching_linkers with
+  | [] -> Ok None (* No runtime-specific linker needed *)
+  | [ linker ] -> Ok (Some linker) (* Exactly one match *)
+  | linkers ->
+      (* Multiple runtime linkers conflict *)
+      Error
+        (Printf.sprintf
+           "conflicting linkers detected. You will need to explicitly specify \
+            a linker. linkers detected: %s"
+           (String.concat ", " (List.map (fun l -> l.name) linkers)))

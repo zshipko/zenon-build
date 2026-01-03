@@ -10,6 +10,8 @@ type t = {
   ext : String_set.t;
 }
 
+let shell_wrapper cmd = [ "sh"; "-c"; cmd ]
+
 let c_like cc =
  fun ~flags ~sources:_ ~output ->
   cc
@@ -93,15 +95,22 @@ let mlton =
     name = "mlton";
     command =
       (fun ~flags ~sources:_ ~output ->
-        [
-          "mlton";
-          "-stop";
-          "o";
-          "-o";
-          Eio.Path.native_exn output.Object_file.path;
-        ]
-        @ (List.map (fun x -> [ "-cc-opt"; x ]) flags.compile |> List.flatten)
-        @ [ Eio.Path.native_exn output.source.path ]);
+        let out =
+          Filename.quote (Eio.Path.native_exn output.Object_file.path)
+        in
+        let src = Filename.quote (Eio.Path.native_exn output.source.path) in
+        let cc_opts =
+          List.concat_map (fun x -> [ "-cc-opt"; x ]) flags.compile
+        in
+        let args =
+          [ "mlton"; "-stop"; "o"; "-output"; out ] @ cc_opts @ [ src ]
+        in
+        shell_wrapper
+          (String.concat " " args
+          ^ Printf.sprintf
+              " && ld -r -keep_private_externs %s.0.o %s.1.o -o %s && rm \
+               %s.0.o %s.1.o"
+              out out out out out));
     ext = String_set.of_list [ "sml"; "mlb" ];
   }
 
@@ -164,6 +173,22 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
       Some (Eio.Process.spawn mgr cmd ~sw)
+
+let all =
+  [
+    clang;
+    clangxx;
+    ispc;
+    ghc;
+    mlton;
+    ats2;
+    flang;
+    cosmocc;
+    cosmocpp;
+    gcc;
+    gxx;
+    gfortran;
+  ]
 
 let find_by_name compilers c =
   match List.find_opt (fun x -> x.name = c) compilers with

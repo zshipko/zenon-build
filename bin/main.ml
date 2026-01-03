@@ -635,6 +635,59 @@ let cmd_install =
   and+ version = version in
   install ~path ~builds ~prefix ~version ()
 
+let list_tools ~path:_ () =
+  Eio_posix.run @@ fun env ->
+  (* Default compilers/linkers enabled by default *)
+  let default_compiler_names =
+    List.map (fun c -> c.Config.Compiler_config.name) Config.default_compilers
+    |> String_set.of_list
+  in
+  let default_linker_names =
+    List.map (fun c -> c.Config.Compiler_config.name) Config.default_linkers
+    |> String_set.of_list
+  in
+
+  (* Display compilers *)
+  Fmt.pr "@[<v>Compilers:@,";
+  List.iter
+    (fun (c : Compiler.t) ->
+      let is_default = String_set.mem c.name default_compiler_names in
+      let default_mark = if is_default then " [default]" else "" in
+      match Command.path env#process_mgr c.name with
+      | Some path ->
+          let exts = String_set.to_list c.ext |> String.concat ", " in
+          Fmt.pr "  \u{2713} %s (%s) - %s%s@," c.name path exts default_mark
+      | None ->
+          let exts = String_set.to_list c.ext |> String.concat ", " in
+          Fmt.pr "  \u{2717} %s - %s%s@," c.name exts default_mark)
+    Compiler.all;
+
+  (* Display linkers *)
+  Fmt.pr "@,Linkers:@,";
+  List.iter
+    (fun (l : Linker.t) ->
+      let is_default = String_set.mem l.name default_linker_names in
+      let default_mark = if is_default then " [default]" else "" in
+      let link_type =
+        match l.link_type with
+        | Linker.Executable -> "exe"
+        | Linker.Shared -> "shared"
+        | Linker.Static -> "static"
+      in
+      match Command.path env#process_mgr l.name with
+      | Some path ->
+          Fmt.pr "  \u{2713} %s (%s) [%s]%s@," l.name path link_type
+            default_mark
+      | None -> Fmt.pr "  \u{2717} %s [%s]%s@," l.name link_type default_mark)
+    Linker.all;
+  Fmt.pr "@]"
+
+let cmd_tools =
+  Cmd.v (Cmd.info "tools" ~doc:"List available compilers and linkers")
+  @@
+  let+ path = path in
+  list_tools ~path ()
+
 let main () =
   try
     Cmd.eval ~catch:false
@@ -649,6 +702,7 @@ let main () =
            cmd_info;
            cmd_compile_commands;
            cmd_install;
+           cmd_tools;
          ]
   with
   | Invalid_argument msg ->

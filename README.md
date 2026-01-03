@@ -2,9 +2,10 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
-By default, `zenon` enables `clang` (C), `clang++` (C++), `flang` (Fortran), `ispc` (ISPC), `ghc` (Haskell), `mlton` (SML) and `patscc` (ATS2).
+By default, `zenon` enables [clang](https://clang.llvm.org/) (C), [clang++](https://clang.llvm.org/) (C++), [flang](https://flang.llvm.org/docs/) (Fortran),
+[ispc](https://ispc.github.io/) (ISPC), [ghc](https://www.haskell.org/) (Haskell), [mlton](http://www.mlton.org) (SML) and [patscc](http://www.ats-lang.org) (ATS2).
 
-Additionally, `cosmocc`, `cosmoc++`, `gcc`, `g++` and `gfortran` are also supported, but not automatically enabled. 
+Additional compilers can be configured in the `zenon.yaml` file. 
 
 ## Installation
 
@@ -30,7 +31,7 @@ $ dune install
 $ zenon build
 ```
 
-will build all targets
+will build all targets in your `zenon.yaml` file
 
 and
 
@@ -68,7 +69,7 @@ $ zenon build -f 'src/*.c'
 
 ## Configuration
 
-`zenon` uses yaml for configuration, to get started create a "zenon.yaml" file in the root of your project:
+`zenon` uses yaml for configuration, to get started create a `zenon.yaml` file in the root of your project:
 
 ```yaml
 build:

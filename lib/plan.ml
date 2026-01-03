@@ -162,6 +162,27 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
         | _ -> (sources, objs))
       t.graph (Build b) ([], [])
   in
+  (* Auto-select linker based on source file extensions if no explicit linker was set *)
+  let linker =
+    match b.Build.linker.name with
+    | "clang" | "gcc" -> (
+        (* Only auto-select if using generic C linker *)
+        let source_exts =
+          List.fold_left
+            (fun acc src -> String_set.add (Source_file.ext src) acc)
+            String_set.empty sources
+        in
+        let available_linkers =
+          [
+            Linker.ghc; Linker.mlton; Linker.ats2; Linker.flang; Linker.gfortran;
+          ]
+        in
+        match Linker.auto_select_linker ~source_exts available_linkers with
+        | Ok (Some linker) -> linker
+        | Ok None -> b.linker (* No specialized linker needed *)
+        | Error msg -> Fmt.failwith "%s" msg)
+    | _ -> b.linker
+  in
   let total_files = List.length objs in
   let completed = Atomic.make 0 in
   let use_progress = total_files > 3 && not verbose in
@@ -258,8 +279,8 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
   Option.iter
     (fun output ->
       if verbose then
-        Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
-      Linker.link b.linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
+        Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
     b.output;
   Option.iter
     (fun s ->
