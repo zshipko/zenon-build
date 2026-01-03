@@ -22,16 +22,17 @@ type t = {
   mutable flags : Flags.t;
   mutable compiler_flags : (string, Flags.t) Hashtbl.t;
   mtime : float;
+  parallel : bool;
 }
 
 let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
-let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
-    ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
-    ?(compiler_flags = []) ?(files = []) ?(headers = []) ?(ignore = []) ?(disable_cache = false)
-    ?output ~source ~name env =
+let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
+    ?after ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
+    ?(compiler_flags = []) ?(files = []) ?(headers = []) ?(ignore = [])
+    ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler_set.default
@@ -52,6 +53,7 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
       String_set.iter (fun ext -> Hashtbl.replace compiler_index ext c) c.ext)
     compilers;
   {
+    parallel;
     pkgconf;
     env;
     source;
@@ -83,17 +85,16 @@ let locate_files t patterns =
       match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
     in
     let is_special_dir name = List.mem name [ "zenon-build"; ".git"; ".jj" ] in
-
     let rec inner path =
       let entries = Eio.Path.read_dir path in
       List.concat_map
         (fun name ->
           let full_path = Eio.Path.(path / name) in
           if Eio.Path.is_directory full_path then
-            if check_ignore name && not (is_special_dir name) then inner full_path
+            if check_ignore name && not (is_special_dir name) then
+              inner full_path
             else []
-          else if Re.execp re (Eio.Path.native_exn full_path) then
-            [ full_path ]
+          else if Re.execp re (Eio.Path.native_exn full_path) then [ full_path ]
           else [])
         entries
     in
@@ -103,8 +104,7 @@ let locate_source_files t : Source_file.t list =
   locate_files t t.files
   |> List.map (fun path -> Source_file.v ~root:t.source path)
 
-let locate_headers t : path list =
-  locate_files t t.headers
+let locate_headers t : path list = locate_files t t.headers
 
 let parse_compile_flags f =
   Eio.Path.with_lines f @@ fun lines -> Seq.map String.trim lines |> List.of_seq

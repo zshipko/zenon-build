@@ -11,7 +11,7 @@ let is_available t cmd =
           let result =
             Eio.Process.parse_out t.mgr Eio.Buf_read.line [ "which"; cmd ]
           in
-          not (String.equal result "")
+          Sys.file_exists (String.trim result)
         with _ -> false
       in
       Hashtbl.add t.checked cmd available;
@@ -22,13 +22,14 @@ let check_command t cmd =
     Fmt.failwith "Command '%s' not found. Please install it and try again." cmd
 
 let check_commands t cmds =
-  let missing = ref [] in
-  List.iter
-    (fun cmd -> if not (is_available t cmd) then missing := cmd :: !missing)
-    cmds;
-  if not (List.is_empty !missing) then
+  let missing =
+    List.fold_left
+      (fun acc cmd -> if not (is_available t cmd) then cmd :: acc else acc)
+      [] cmds
+  in
+  if not (List.is_empty missing) then
     Fmt.failwith
       "The following commands are not available: %a@.Please install them and \
        try again."
       (Fmt.list ~sep:(Fmt.any ", ") Fmt.string)
-      (List.rev !missing)
+      (List.rev missing)

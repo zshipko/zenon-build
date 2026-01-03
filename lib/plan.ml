@@ -162,9 +162,10 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
         | _ -> (sources, objs))
       t.graph (Build b) ([], [])
   in
-  Eio.Switch.run @@ fun sw ->
   let objs =
-    List.filter_map
+    Eio.Switch.run @@ fun sw ->
+    (if b.parallel then fun f x -> Eio.Fiber.List.filter_map f x
+     else List.filter_map)
       (fun (v', obj) ->
         let obj_node = Obj obj in
         match G.find_edge t.graph v' obj_node |> G.E.label with
@@ -210,7 +211,7 @@ let run_all ?execute ?args t builds =
     List.fold_left
       (fun acc (build : Build.t) ->
         if Hashtbl.mem acc build.name then
-          Fmt.failwith "Duplicate build name: %s" build.name;
+          Fmt.failwith "duplicate build name: %s" build.name;
         Hashtbl.add acc build.name build;
         acc)
       (Hashtbl.create (List.length builds))
@@ -226,10 +227,10 @@ let run_all ?execute ?args t builds =
       (fun (build : Build.t) ->
         Hashtbl.iter
           (fun _ compiler ->
-            let cmd = Compiler.get_command_name compiler in
+            let cmd = compiler.Compiler.name in
             required_commands := String_set.add cmd !required_commands)
           build.compiler_index;
-        let linker_cmd = Linker.get_command_name build.linker in
+        let linker_cmd = build.linker.name in
         required_commands := String_set.add linker_cmd !required_commands)
       builds;
     Command.check_commands checker (String_set.to_list !required_commands));
@@ -244,7 +245,7 @@ let run_all ?execute ?args t builds =
               (* Edge from dependency to dependent: dep_build -> build *)
               G.add_edge t.graph (Build dep_build) (Build build)
           | None ->
-              Fmt.failwith "Build '%s' depends on unknown build '%s'" build.name
+              Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
                 dep_name)
         build.depends_on)
     builds;

@@ -116,6 +116,7 @@ module Build_config = struct
     only_if : string option; [@default None] [@key "if"]
     pkgconf : string list; [@default []] [@key "pkg"]
     hidden : bool; [@default false]
+    parallel : bool; [@default true]
   }
   [@@deriving yaml]
 
@@ -137,6 +138,7 @@ module Build_config = struct
       only_if = None;
       pkgconf = [];
       hidden = false;
+      parallel = true;
     }
 end
 
@@ -261,7 +263,7 @@ let init ?mtime ~env path t =
               match config.target with Some p -> p | None -> "default")
         in
         let build =
-          Build.v ?script:config.script
+          Build.v ~parallel:config.parallel ?script:config.script
             ~pkgconf:(t.pkgconf @ config.pkgconf)
             ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
             ~compiler_flags ?output ~source ~files:(t.files @ config.files)

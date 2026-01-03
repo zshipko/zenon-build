@@ -40,6 +40,13 @@ let clang_shared =
 let clangxx =
   { name = "clang++"; command = c_like [ "clang++" ]; link_type = Executable }
 
+let clangxx_shared =
+  {
+    name = "clang++";
+    command = c_like [ "clang++"; "-shared" ];
+    link_type = Shared;
+  }
+
 let ar =
   {
     name = "ar";
@@ -94,6 +101,7 @@ let find_by_name linkers l =
       | "c" | "cc" | "clang" -> Some clang
       | "shared" | "so" | "dylib" -> Some clang_shared
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
+      | "clang++-shared" -> Some clangxx_shared
       | "ar" | "static" | "staticlib" -> Some ar
       | "ghc" | "hs" | "lhs" -> Some ghc
       | "flang-new" | "flang" | "fortran" -> Some flang
@@ -101,5 +109,3 @@ let find_by_name linkers l =
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
       | _ -> None)
-
-let get_command_name t = t.name

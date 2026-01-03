@@ -137,5 +137,3 @@ let find_by_name compilers c =
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
       | _ -> None)
-
-let get_command_name t = t.name
