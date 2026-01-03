@@ -47,6 +47,9 @@ let clangxx_shared =
     link_type = Shared;
   }
 
+let ape =
+  { name = "apelink"; command = c_like [ "apelink" ]; link_type = Executable }
+
 let ar =
   {
     name = "ar";
@@ -108,4 +111,5 @@ let find_by_name linkers l =
       | "gcc" -> Some gcc
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
+      | "ape" | "apelink" -> Some ape
       | _ -> None)

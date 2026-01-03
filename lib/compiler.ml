@@ -24,11 +24,25 @@ let clang =
     ext = String_set.of_list [ "c"; "s"; "ll"; "bc" ];
   }
 
+let cosmocc =
+  {
+    name = "cosmocc";
+    command = c_like [ "cosmocc" ];
+    ext = String_set.of_list [ "c"; "s" ];
+  }
+
+let cosmocpp =
+  {
+    name = "cosmoc++";
+    command = c_like [ "cosmoc++" ];
+    ext = String_set.of_list [ "cc"; "cpp"; "cxx" ];
+  }
+
 let clangxx =
   {
     name = "clang++";
     command = c_like [ "clang++" ];
-    ext = String_set.of_list [ "cc"; "cpp" ];
+    ext = String_set.of_list [ "cc"; "cpp"; "cxx" ];
   }
 
 let ispc =
@@ -136,4 +150,6 @@ let find_by_name compilers c =
       | "gcc" -> Some gcc
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
+      | "cosmocc" -> Some cosmocc
+      | "cosmoc++" -> Some cosmocpp
       | _ -> None)
