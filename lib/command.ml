@@ -28,8 +28,6 @@ let check_commands t cmds =
       [] cmds
   in
   if not (List.is_empty missing) then
-    Fmt.failwith
-      "The following commands are not available: %a@.Please install them and \
-       try again."
+    Fmt.failwith "missing commands: %a@."
       (Fmt.list ~sep:(Fmt.any ", ") Fmt.string)
       (List.rev missing)

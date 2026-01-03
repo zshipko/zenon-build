@@ -76,6 +76,9 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     hidden;
   }
 
+let special_dirs = String_set.of_list [ "zenon-build"; ".git"; ".jj" ]
+let is_special_dir name = String_set.mem name special_dirs
+
 let locate_files t patterns =
   if List.is_empty patterns then []
   else
@@ -84,7 +87,6 @@ let locate_files t patterns =
     let check_ignore f =
       match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
     in
-    let is_special_dir name = List.mem name [ "zenon-build"; ".git"; ".jj" ] in
     let rec inner path =
       let entries = Eio.Path.read_dir path in
       List.concat_map
