@@ -2,7 +2,7 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
-By default, `zenon` enables [clang](https://clang.llvm.org/) (C), [clang++](https://clang.llvm.org/) (C++), [flang](https://flang.llvm.org/docs/) (Fortran),
+Out of the box, `zenon` supports [clang](https://clang.llvm.org/) (C), [clang++](https://clang.llvm.org/) (C++), [flang](https://flang.llvm.org/docs/) (Fortran),
 [ispc](https://ispc.github.io/) (ISPC), [ghc](https://www.haskell.org/) (Haskell), [mlton](http://www.mlton.org) (SML) and [patscc](http://www.ats-lang.org) (ATS2).
 
 Additional compilers can be configured in the `zenon.yaml` file. 
@@ -171,7 +171,7 @@ build:
 - `files` - Source files for this target (supports globs like `*.c`, `**/*.c`)
 - `root` - Root directory for source files (defaults to `.`)
 - `depends-on` - List of targets that must build first
-- `linker` - Linker to use (auto-detected from target name if not specified)
+- `linker` - Linker to use (auto-detected from target name and source files if not specified)
 - `script` - Shell script to run instead of compiling
 - `after` - Shell script to run after building
 - `if` - Only build if this shell command succeeds
