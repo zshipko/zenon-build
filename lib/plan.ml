@@ -162,6 +162,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
         | _ -> (sources, objs))
       t.graph (Build b) ([], [])
   in
+  let visited_flags = Hashtbl.create 8 in
   let objs =
     Eio.Switch.run @@ fun sw ->
     (if b.parallel then fun f x -> Eio.Fiber.List.filter_map f x
@@ -181,7 +182,14 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
                       ~output:obj ~sw ~build_mtime:b.mtime
                       (Flags.concat b_flags flags)
                   in
-                  let () = link_flags := Flags.concat !link_flags flags in
+                  let key =
+                    c.name
+                    ^ String.concat "_" flags.link
+                    ^ String.concat "_" flags.compile
+                  in
+                  (if not (Hashtbl.mem visited_flags key) then
+                     let () = Hashtbl.add visited_flags key true in
+                     link_flags := Flags.concat !link_flags flags);
                   Option.iter Eio.Process.await_exn task
                 in
                 Some obj
