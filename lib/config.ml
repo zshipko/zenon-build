@@ -209,13 +209,11 @@ let init ?mtime ~env path t =
         in
         None
       else
-        (* Build compilers list first *)
         let compilers = List.map (Compiler_config.compiler []) t.compilers in
         let compilers =
           compilers
           @ List.map (Compiler_config.compiler compilers) config.compilers
         in
-        (* Select linker based on compilers and target *)
         let linker_name =
           match config.Build_config.linker with
           | Some linker -> linker (* Specified, so use it *)
@@ -227,12 +225,7 @@ let init ?mtime ~env path t =
                      && String.ends_with ~suffix:".a" (Filename.basename target)
                 ->
                   "ar"
-              | _ ->
-                  (* Check if ghc is in the compilers list *)
-                  if
-                    List.exists (fun (c : Compiler.t) -> c.name = "ghc") compilers
-                  then "ghc"
-                  else Compiler_config.clang.name)
+              | _ -> Compiler_config.clang.name)
         in
         let linker =
           Compiler_config.linker
