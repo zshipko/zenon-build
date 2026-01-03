@@ -2,8 +2,8 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
-Out of the box, `zenon` supports [clang](https://clang.llvm.org/) (C), [clang++](https://clang.llvm.org/) (C++), [flang](https://flang.llvm.org/docs/) (Fortran),
-[ispc](https://ispc.github.io/) (ISPC), [ghc](https://www.haskell.org/) (Haskell), [mlton](http://www.mlton.org) (SML) and [patscc](http://www.ats-lang.org) (ATS2).
+Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](https://clang.llvm.org/), [flang](https://flang.llvm.org/docs/),
+[ispc](https://ispc.github.io/), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [patscc](http://www.ats-lang.org).
 
 Additional compilers can be configured in the `zenon.yaml` file. 
 
@@ -159,8 +159,7 @@ build:
 - `build` - List of build targets (required)
 - `files` - Source files to include in all targets
 - `flags` - Compiler/linker flags for all targets
-- `compilers` - Custom compiler configurations
-- `linkers` - Custom linker configurations
+- `tools` - Custom compiler and linker configurations
 - `ignore` - File patterns to exclude from all targets
 - `pkg` - pkg-config packages for all targets
 
@@ -197,18 +196,19 @@ flags:
 
 ### Custom compilers/linkers
 
-It is possible to define custom compilers at the top level, then reference by name in build targets:
+It is possible to define custom compilers under the `tools` section, then reference by name in build targets:
 
 ```yaml
-compilers:
-  - name: mycc
-    ext: [myc]
-    command: ["mycc", "#flags", "-o", "#output"]
+tools:
+  compilers:
+    - name: mycc
+      ext: [myc]
+      command: ["mycc", "#flags", "-o", "#output"]
 
-linkers:
-  - name: mycc
-    link-type: exe
-    command: ["mycc", "--link", "#flags", "-o", "#output", "#objs"]
+  linkers:
+    - name: mycc
+      link-type: exe
+      command: ["mycc", "--link", "#flags", "-o", "#output", "#objs"]
 
 build:
   - target: example

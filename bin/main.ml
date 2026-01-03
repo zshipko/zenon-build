@@ -635,8 +635,15 @@ let cmd_install =
   and+ version = version in
   install ~path ~builds ~prefix ~version ()
 
-let list_tools ~path:_ () =
+let list_tools ~path () =
   Eio_posix.run @@ fun env ->
+  (* Load config to get custom compilers/linkers *)
+  let config =
+    match Config.read_file_or_default Eio.Path.(env#fs / path) with
+    | Ok (cfg, _) -> cfg
+    | Error _ -> Config.empty
+  in
+
   (* Default compilers/linkers enabled by default *)
   let default_compiler_names =
     List.map (fun c -> c.Config.Compiler_config.name) Config.default_compilers
@@ -647,27 +654,60 @@ let list_tools ~path:_ () =
     |> String_set.of_list
   in
 
+  (* Get custom compilers from config *)
+  let custom_compilers =
+    List.map (Config.Compiler_config.compiler []) config.tools.compilers
+  in
+  let custom_compiler_names =
+    List.map (fun (c : Compiler.t) -> c.name) custom_compilers
+    |> String_set.of_list
+  in
+
+  (* Combine all compilers, avoiding duplicates *)
+  let all_compilers_combined =
+    custom_compilers
+    @ List.filter
+        (fun c -> not (String_set.mem c.Compiler.name custom_compiler_names))
+        Compiler.all
+  in
+
   (* Display compilers *)
   Fmt.pr "@[<v>Compilers:@,";
   List.iter
     (fun (c : Compiler.t) ->
       let is_default = String_set.mem c.name default_compiler_names in
-      let default_mark = if is_default then " [default]" else "" in
+      let marks = if is_default then " [default]" else "" in
       match Command.path env#process_mgr c.name with
       | Some path ->
           let exts = String_set.to_list c.ext |> String.concat ", " in
-          Fmt.pr "  \u{2713} %s (%s) - %s%s@," c.name path exts default_mark
+          Fmt.pr "  \u{2713} %s (%s) - %s%s@," c.name path exts marks
       | None ->
           let exts = String_set.to_list c.ext |> String.concat ", " in
-          Fmt.pr "  \u{2717} %s - %s%s@," c.name exts default_mark)
-    Compiler.all;
+          Fmt.pr "  \u{2717} %s - %s%s@," c.name exts marks)
+    all_compilers_combined;
+
+  (* Get custom linkers from config *)
+  let custom_linkers =
+    List.map (Config.Compiler_config.linker []) config.tools.linkers
+  in
+  let custom_linker_names =
+    List.map (fun (l : Linker.t) -> l.name) custom_linkers |> String_set.of_list
+  in
+
+  (* Combine all linkers, avoiding duplicates *)
+  let all_linkers_combined =
+    custom_linkers
+    @ List.filter
+        (fun l -> not (String_set.mem l.Linker.name custom_linker_names))
+        Linker.all
+  in
 
   (* Display linkers *)
   Fmt.pr "@,Linkers:@,";
   List.iter
     (fun (l : Linker.t) ->
       let is_default = String_set.mem l.name default_linker_names in
-      let default_mark = if is_default then " [default]" else "" in
+      let marks = if is_default then " [default]" else "" in
       let link_type =
         match l.link_type with
         | Linker.Executable -> "exe"
@@ -676,10 +716,9 @@ let list_tools ~path:_ () =
       in
       match Command.path env#process_mgr l.name with
       | Some path ->
-          Fmt.pr "  \u{2713} %s (%s) [%s]%s@," l.name path link_type
-            default_mark
-      | None -> Fmt.pr "  \u{2717} %s [%s]%s@," l.name link_type default_mark)
-    Linker.all;
+          Fmt.pr "  \u{2713} %s (%s) [%s]%s@," l.name path link_type marks
+      | None -> Fmt.pr "  \u{2717} %s [%s]%s@," l.name link_type marks)
+    all_linkers_combined;
   Fmt.pr "@]"
 
 let cmd_tools =

@@ -178,11 +178,21 @@ let default_linkers =
     Compiler_config.ats2;
   ]
 
+module Tools = struct
+  type t = {
+    compilers : Compiler_config.t list; [@default default_compilers]
+    linkers : Compiler_config.t list; [@default default_linkers]
+  }
+  [@@deriving yaml]
+
+  let default = { compilers = default_compilers; linkers = default_linkers }
+  let empty = { compilers = []; linkers = [] }
+end
+
 type t = {
   build : Build_config.t list;
   flags : Build_config.Lang_flags.t list; [@default []]
-  compilers : Compiler_config.t list; [@default default_compilers]
-  linkers : Compiler_config.t list; [@default default_linkers]
+  tools : Tools.t; [@default Tools.default]
   files : string list; [@default []]
   ignore : string list; [@default []]
   pkgconf : string list; [@default []] [@key "pkg"]
@@ -193,8 +203,7 @@ let empty =
   {
     build = [];
     flags = [];
-    compilers = [];
-    linkers = [];
+    tools = Tools.empty;
     files = [];
     ignore = [];
     pkgconf = [];
@@ -243,7 +252,7 @@ let init ?mtime ~env path t =
         None
       else
         let global_compilers =
-          List.map (Compiler_config.compiler []) t.compilers
+          List.map (Compiler_config.compiler []) t.tools.compilers
         in
         let all_compilers = global_compilers @ Compiler.all in
         let compilers =
@@ -273,7 +282,7 @@ let init ?mtime ~env path t =
         in
         let linker =
           Compiler_config.linker
-            (List.map (Compiler_config.linker []) t.linkers)
+            (List.map (Compiler_config.linker []) t.tools.linkers)
             Compiler_config.
               {
                 name = linker_name;
