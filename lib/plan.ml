@@ -289,7 +289,7 @@ let run_all ?execute ?args t builds =
             (fun succ acc ->
               match succ with
               | Build dependent ->
-                  let n = Int.succ @@ Hashtbl.find ndeps dependent.name in
+                  let n = Int.pred @@ Hashtbl.find ndeps dependent.name in
                   Hashtbl.replace ndeps dependent.name n;
                   if n = 0 && not (Hashtbl.mem executed dependent.name) then
                     dependent :: acc
