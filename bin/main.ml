@@ -316,16 +316,21 @@ let makefile ~path ~target ?output () =
 
       let source_files = Build.locate_source_files b in
       let sources =
-        List.map
-          (fun f -> Util.relative_to b.source f.Source_file.path)
-          source_files
+        List.map (fun f -> Eio.Path.native_exn f.Source_file.path) source_files
       in
       let objects =
-        List.map (fun src -> Filename.remove_extension src ^ ".o") sources
+        List.map
+          (fun src ->
+            Object_file.of_source ~root:b.source ~build_name:b.name
+              ~build_dir:Eio.Path.(b.build / "obj")
+              src)
+          source_files
       in
 
       Makefile.add_variable makefile "SRCS" (String.concat " " sources);
-      Makefile.add_variable makefile "OBJS" (String.concat " " objects);
+      Makefile.add_variable makefile "OBJS"
+        (String.concat " "
+           (List.map (fun x -> Eio.Path.native_exn x.Object_file.path) objects));
       Makefile.add_variable makefile "TARGET" target_name;
 
       (* Default target *)
