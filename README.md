@@ -157,7 +157,7 @@ build:
 - `hidden` - Don't build unless explicitly named
 - `disable_cache` - Rebuild every time
 - `flags` - Compiler/linker flags for this target
-- `compilers` - Custom compilers for this target
+- `compilers` - List of compiler names to use (e.g., `[clang, clang++]`)
 
 ### Flag configuration
 
@@ -174,12 +174,26 @@ flags:
 
 ### Custom compilers/linkers
 
+`zenon` supports `clang`, `clang++`, `flang` `ghc`, `ispc`, and `rustc` by default. `gcc`, `g++` and `gfortran` are also
+supported, but not enabled by default. 
+
+It is possible to define custom compilers at the top level, then reference by name in build targets:
+
 ```yaml
 compilers:
   - name: mycc
     ext: [myc]
-    command: ["mycc", "#flags", "-o", "#output"]
+    command: ["mycc", "#flags", "-o", "#output"] 
+linkers:
+  - name: mycc
+    link-type: exe
+
+build:
+  - target: example
+    compilers: [mycc]
 ```
+
+In the example above, `#flags` and `#output` are template arguments and will be replaces with the compile flags and output path.
 
 - `name` - Compiler name
 - `ext` - File extensions this compiler handles

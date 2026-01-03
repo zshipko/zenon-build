@@ -8,7 +8,7 @@ module Compiler_config = struct
     name : string;
     ext : string list; [@default []]
     command : string list option; [@default None]
-    link_type : Linker.link_type; [@default Linker.Executable]
+    link_type : Linker.link_type; [@key "link-type"] [@default Linker.Executable]
   }
   [@@deriving yaml]
 
@@ -97,27 +97,13 @@ module Build_config = struct
     [@@deriving yaml]
   end
 
-  let default_compilers =
-    [
-      Compiler_config.clang;
-      Compiler_config.clangxx;
-      Compiler_config.ispc;
-      Compiler_config.ghc;
-    ]
-
-  let default_linkers =
-    [
-      Compiler_config.clang;
-      Compiler_config.clangxx;
-      Compiler_config.{ clang with name = "ar" };
-      Compiler_config.ghc;
-    ]
+  let default_compiler_names = []
 
   type t = {
     name : string option; [@default None]
     root : string option;
     target : string option; [@default None]
-    compilers : Compiler_config.t list; [@default default_compilers]
+    compilers : string list; [@default default_compiler_names]
     linker : string option; [@default None]
     files : string list; [@default []]
     ignore : string list; [@default []]
@@ -138,7 +124,7 @@ module Build_config = struct
       target = Some "a.out";
       root = Some ".";
       ignore = [];
-      compilers = default_compilers;
+      compilers = default_compiler_names;
       linker = None;
       files = [];
       script = None;
@@ -152,11 +138,27 @@ module Build_config = struct
     }
 end
 
+let default_compilers =
+  [
+    Compiler_config.clang;
+    Compiler_config.clangxx;
+    Compiler_config.ispc;
+    Compiler_config.ghc;
+  ]
+
+let default_linkers =
+  [
+    Compiler_config.clang;
+    Compiler_config.clangxx;
+    Compiler_config.{ clang with name = "ar" };
+    Compiler_config.ghc;
+  ]
+
 type t = {
   build : Build_config.t list;
   flags : Build_config.Lang_flags.t list; [@default []]
-  compilers : Compiler_config.t list; [@default Build_config.default_compilers]
-  linkers : Compiler_config.t list; [@default Build_config.default_linkers]
+  compilers : Compiler_config.t list; [@default default_compilers]
+  linkers : Compiler_config.t list; [@default default_linkers]
   files : string list; [@default []]
   ignore : string list; [@default []]
   pkgconf : string list; [@default []] [@key "pkg"]
@@ -212,7 +214,9 @@ let init ?mtime ~env path t =
         let compilers = List.map (Compiler_config.compiler []) t.compilers in
         let compilers =
           compilers
-          @ List.map (Compiler_config.compiler compilers) config.compilers
+          @ List.filter_map
+              (fun name -> Compiler.find_by_name compilers name)
+              config.compilers
         in
         let linker_name =
           match config.Build_config.linker with

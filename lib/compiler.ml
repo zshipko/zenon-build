@@ -73,6 +73,41 @@ let ghc =
     ext = String_set.of_list [ "hs"; "lhs" ];
   }
 
+let flang =
+  {
+    name = "flang-new";
+    command = c_like [ "flang-new" ];
+    ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
+  }
+
+let gcc =
+  {
+    name = "gcc";
+    command = c_like [ "gcc" ];
+    ext = String_set.of_list [ "c"; "s" ];
+  }
+
+let gxx =
+  {
+    name = "g++";
+    command = c_like [ "g++" ];
+    ext = String_set.of_list [ "cc"; "cpp" ];
+  }
+
+let gfortran =
+  {
+    name = "gfortran";
+    command = c_like [ "gfortran" ];
+    ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
+  }
+
+let rustc =
+  {
+    name = "rustc";
+    command = c_like [ "rustc" ];
+    ext = String_set.of_list [ "rs" ];
+  }
+
 let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
   let st =
     try
@@ -104,4 +139,9 @@ let find_by_name compilers c =
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
       | "ispc" -> Some ispc
       | "ghc" | "hs" | "lhs" -> Some ghc
+      | "flang-new" | "flang" | "fortran" -> Some flang
+      | "gcc" -> Some gcc
+      | "g++" | "gxx" -> Some gxx
+      | "gfortran" -> Some gfortran
+      | "rustc" | "rust" -> Some rustc
       | _ -> None)

@@ -2,7 +2,11 @@ open Types
 open Source_file
 open Object_file
 
-type link_type = Executable | Shared | Static [@@deriving yaml]
+type link_type =
+  | Executable [@name "exe"]
+  | Shared [@name "shared"]
+  | Static [@name "static"]
+[@@deriving yaml]
 
 type t = {
   name : string;
@@ -69,6 +73,36 @@ let ghc =
     link_type = Executable;
   }
 
+let flang =
+  {
+    name = "flang-new";
+    command = c_like [ "flang-new" ];
+    link_type = Executable;
+  }
+
+let gcc = { name = "gcc"; command = c_like [ "gcc" ]; link_type = Executable }
+let gxx = { name = "g++"; command = c_like [ "g++" ]; link_type = Executable }
+
+let gfortran =
+  { name = "gfortran"; command = c_like [ "gfortran" ]; link_type = Executable }
+
+let rustc =
+  { name = "rustc"; command = c_like [ "rustc" ]; link_type = Executable }
+
+let rustc_shared =
+  {
+    name = "rustc";
+    command = c_like [ "rustc"; "--crate-type=cdylib" ];
+    link_type = Shared;
+  }
+
+let rustc_static =
+  {
+    name = "rustc";
+    command = c_like [ "rustc"; "--crate-type=staticlib" ];
+    link_type = Static;
+  }
+
 let find_by_name linkers l =
   match List.find_opt (fun x -> x.name = l) linkers with
   | Some x -> Some x
@@ -79,4 +113,11 @@ let find_by_name linkers l =
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
       | "ar" | "static" | "staticlib" -> Some ar
       | "ghc" | "hs" | "lhs" -> Some ghc
+      | "flang-new" | "flang" | "fortran" -> Some flang
+      | "gcc" -> Some gcc
+      | "g++" | "gxx" -> Some gxx
+      | "gfortran" -> Some gfortran
+      | "rustc" | "rust" -> Some rustc
+      | "rustc-shared" | "rust-shared" -> Some rustc_shared
+      | "rustc-static" | "rust-static" -> Some rustc_static
       | _ -> None)

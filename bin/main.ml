@@ -103,7 +103,9 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
   (* Collect all transitive dependencies *)
   let build_map =
     List.fold_left
-      (fun acc b -> Hashtbl.add acc b.Build.name b; acc)
+      (fun acc b ->
+        Hashtbl.add acc b.Build.name b;
+        acc)
       (Hashtbl.create (List.length x))
       x
   in
