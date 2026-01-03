@@ -2,6 +2,10 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
+By default, `zenon` enables `clang`, `clang++`, `flang`, `ghc`, and `ispc`.
+
+`cosmocc`, `cosmoc++`, `gcc`, `g++` and `gfortran` are also supported, but not automatically enabled. 
+
 ## Installation
 
 Using [opam](https://opam.ocaml.org/):
@@ -192,28 +196,28 @@ flags:
 
 ### Custom compilers/linkers
 
-`zenon` supports `clang`, `clang++`, `flang`, `ghc`, and `ispc` by default. `gcc`, `g++` and `gfortran` are also
-supported, but not enabled by default. 
-
 It is possible to define custom compilers at the top level, then reference by name in build targets:
 
 ```yaml
 compilers:
   - name: mycc
     ext: [myc]
-    command: ["mycc", "#flags", "-o", "#output"] 
+    command: ["mycc", "#flags", "-o", "#output"]
+
 linkers:
   - name: mycc
     link-type: exe
+    command: ["mycc", "--link", "#flags", "-o", "#output", "#objs"]
 
 build:
   - target: example
     compilers: [mycc]
 ```
 
-In the example above, `#flags` and `#output` are template arguments and will be replaces with the compile flags and output path.
+In the example above, `#objs`, `#flags` and `#output` are template arguments and will be replaced with the object paths, flags and output path.
 
 - `name` - Compiler name
 - `ext` - File extensions this compiler handles
 - `command` - Command template (`#flags`, `#output`, `#objs` are substituted)
+- `link-type` - Specifies the type of linker (should only be set when defining linkers)
 
