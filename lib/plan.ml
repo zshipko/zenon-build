@@ -217,20 +217,31 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                 let flags = Option.value ~default:(Flags.v ()) flags in
                 let () =
                   let filepath = Util.relative_to b.source obj.source.path in
-                  let task =
-                    Compiler.compile_obj c b.env#process_mgr ~sources
-                      ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                      (Flags.concat b_flags flags)
-                  in
+                  let combined_flags = Flags.concat b_flags flags in
                   let key =
                     c.name
                     ^ String.concat "_" flags.link
                     ^ String.concat "_" flags.compile
                   in
-                  (if not (Hashtbl.mem visited_flags key) then
-                     let () = Hashtbl.add visited_flags key true in
-                     link_flags := Flags.concat !link_flags flags);
-                  Option.iter Eio.Process.await_exn task;
+                  (try
+                     let task =
+                       Compiler.compile_obj c b.env#process_mgr ~sources
+                         ~output:obj ~sw ~build_mtime:b.mtime ~verbose
+                         combined_flags
+                     in
+                     Option.iter (fun task -> Eio.Process.await_exn task) task;
+                     if not (Hashtbl.mem visited_flags key) then
+                       let () = Hashtbl.add visited_flags key true in
+                       link_flags := Flags.concat !link_flags flags
+                   with exn ->
+                     let cmd =
+                       c.command ~sources ~flags:combined_flags ~output:obj
+                     in
+                     Fmt.failwith
+                       "compilation failed for '%s' in target '%s'\n\
+                        \tcommand: %s\n\
+                        \tmessage: %a"
+                       filepath b.name (String.concat " " cmd) Fmt.exn exn);
                   report_progress filepath
                 in
                 Some obj
@@ -247,10 +258,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
 
   Option.iter
     (fun output ->
-      if !count > 0 then (
-        if verbose then
-          Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
-        Linker.link b.linker b.env#process_mgr ~objs ~output ~flags:!link_flags))
+      if verbose then
+        Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
+      Linker.link b.linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
     b.output;
   Option.iter
     (fun s ->
@@ -314,7 +324,7 @@ let run_all ?execute ?args ?(verbose = false) t builds =
       Hashtbl.add ndeps build.name (List.length build.depends_on))
     builds;
 
-  (* Find all builds with no dependencies (in-degree 0) *)
+  (* Find all builds with no dependencies *)
   let ready =
     ref
       (Eio.Fiber.List.filter
@@ -328,15 +338,18 @@ let run_all ?execute ?args ?(verbose = false) t builds =
   while not (List.is_empty !ready) do
     (* Build all ready targets in parallel *)
     let builds =
-      Eio.Fiber.List.map
+      Eio.Fiber.List.filter_map
         (fun (build : Build.t) ->
-          run_build ?execute ?execute_args:args ~verbose t build;
-          Hashtbl.add executed build.name ();
-          build)
+          try
+            run_build ?execute ?execute_args:args ~verbose t build;
+            Hashtbl.add executed build.name ();
+            Some build
+          with Failure msg ->
+            Util.log "❌ ERROR %s" msg;
+            None)
         !ready
     in
 
-    (* Update in-degrees and find newly ready builds *)
     let count = ref 0 in
     ready :=
       List.fold_left

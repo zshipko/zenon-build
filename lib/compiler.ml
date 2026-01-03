@@ -73,6 +73,7 @@ let ghc =
               | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
               | None -> None)
             sources
+          |> String_set.of_list |> String_set.to_list
         in
         let hidir =
           match Eio.Path.split output.Object_file.path with
