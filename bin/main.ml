@@ -12,9 +12,9 @@ let output =
   Arg.(
     value & opt (some string) None & info [ "o"; "output" ] ~doc ~docv:"PATH")
 
-let builds =
-  let doc = "Selected builds" in
-  Arg.(value & pos_all string [] & info [] ~doc ~docv:"BUILD")
+let targets =
+  let doc = "Selected targets" in
+  Arg.(value & pos_all string [] & info [] ~doc ~docv:"TARGETS")
 
 let cflag =
   let doc = "Compiler flag" in
@@ -198,7 +198,7 @@ let cmd_build =
   and+ file = file
   and+ ignore = ignore
   and+ path = path
-  and+ builds = builds
+  and+ builds = targets
   and+ cflags = cflag
   and+ ldflags = ldflag
   and+ arg = arg
@@ -211,24 +211,32 @@ let cmd_build =
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
   @@
-  let+ builds = builds and+ path = path in
+  let+ builds = targets and+ path = path in
   clean ~path ~builds ()
 
+let target =
+  let doc = "Target to run" in
+  Arg.(value & pos 0 (some string) None & info [] ~doc ~docv:"TARGET")
+
 let build =
-  let doc = "Build output to run" in
-  Arg.(value & pos 0 (some string) None & info [] ~doc ~docv:"BUILD")
+  let doc = "Compile before running" in
+  Arg.(value & flag & info [ "build"; "b" ] ~doc)
 
 let run_args =
   let doc = "Arguments to pass to executable" in
   Arg.(value & pos_right 0 string [] & info [] ~doc ~docv:"ARG")
 
-let run ~path ~build ~args () =
+let run ~path ~target ~args ~build () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in
-  let b = find_build x build in
+  let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
+      if build then (
+        let plan = Plan.v () in
+        Plan.build plan b;
+        Plan.run_build plan b);
       match b.output with
       | None -> Fmt.failwith "target %s has not output" b.name
       | Some exe ->
@@ -238,13 +246,16 @@ let run ~path ~build ~args () =
 let cmd_run =
   Cmd.v (Cmd.info "run")
   @@
-  let+ build = build and+ path = path and+ args = run_args in
-  run ~path ~build ~args ()
+  let+ target = target
+  and+ path = path
+  and+ args = run_args
+  and+ build = build in
+  run ~path ~target ~args ~build ()
 
-let pkg ~path ~prefix ~build ~version ?output () =
+let pkg ~path ~prefix ~target ~version ?output () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in
-  let b = find_build x build in
+  let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
@@ -272,17 +283,17 @@ let version =
 let cmd_pkg =
   Cmd.v (Cmd.info "pkg")
   @@
-  let+ build = build
+  let+ target = target
   and+ path = path
   and+ prefix = prefix
   and+ version = version
   and+ output = output in
-  pkg ~path ~build ~prefix ~version ?output ()
+  pkg ~path ~target ~prefix ~version ?output ()
 
-let makefile ~path ~build ?output () =
+let makefile ~path ~target ?output () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in
-  let b = find_build x build in
+  let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
@@ -352,8 +363,8 @@ let makefile ~path ~build ?output () =
 let cmd_make =
   Cmd.v (Cmd.info "make" ~doc:"Generate Makefile for a build target")
   @@
-  let+ build = build and+ path = path and+ output = output in
-  makefile ~path ~build ?output ()
+  let+ target = target and+ path = path and+ output = output in
+  makefile ~path ~target ?output ()
 
 let graph ~path ~builds ?output () =
   Eio_posix.run @@ fun env ->
@@ -380,7 +391,7 @@ let graph ~path ~builds ?output () =
 let cmd_graph =
   Cmd.v (Cmd.info "graph" ~doc:"Generate DOT graph of build dependencies")
   @@
-  let+ builds = builds and+ path = path and+ output = output in
+  let+ builds = targets and+ path = path and+ output = output in
   graph ~path ~builds ?output ()
 
 let info ~path ~builds () =
@@ -459,7 +470,7 @@ let info ~path ~builds () =
 let cmd_info =
   Cmd.v (Cmd.info "info" ~doc:"Show build target information and statistics")
   @@
-  let+ builds = builds and+ path = path in
+  let+ builds = targets and+ path = path in
   info ~path ~builds ()
 
 let compile_commands ~path ~builds ?output () =
@@ -555,7 +566,7 @@ let cmd_compile_commands =
     (Cmd.info "compile-commands"
        ~doc:"Generate compile_commands.json for IDE/LSP integration")
   @@
-  let+ builds = builds and+ path = path and+ output = output in
+  let+ builds = targets and+ path = path and+ output = output in
   compile_commands ~path ~builds ?output ()
 
 let install ~path ~builds ~prefix ~version () =
@@ -665,7 +676,7 @@ let cmd_install =
     (Cmd.info "install"
        ~doc:"Install built artifacts to specified prefix directory")
   @@
-  let+ builds = builds
+  let+ builds = targets
   and+ path = path
   and+ prefix = prefix
   and+ version = version in
