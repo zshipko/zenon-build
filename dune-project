@@ -19,7 +19,15 @@
  (name zenon)
  (synopsis "Zenon: C build tool of the 21st century")
  (description "A 'smart' build tool for C-like languages")
- (depends ocaml eio_posix yaml re ocamlgraph ppx_deriving_yaml cmdliner)
+ (depends
+  ocaml
+  eio_posix
+  yaml
+  re
+  ocamlgraph
+  ppx_deriving_yaml
+  cmdliner
+  ezjsonm)
  (tags (build)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

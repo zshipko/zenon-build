@@ -18,6 +18,7 @@ type t = {
   output : path option;
   mutable disable_cache : bool;
   mutable files : Re.t list;
+  mutable headers : Re.t list;
   mutable flags : Flags.t;
   mutable compiler_flags : (string, Flags.t) Hashtbl.t;
   mtime : float;
@@ -29,7 +30,7 @@ let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
 let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
     ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
-    ?(compiler_flags = []) ?(files = []) ?(ignore = []) ?(disable_cache = false)
+    ?(compiler_flags = []) ?(files = []) ?(headers = []) ?(ignore = []) ?(disable_cache = false)
     ?output ~source ~name env =
   let compilers =
     match compilers with
@@ -59,6 +60,7 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
     compilers;
     linker;
     files = List.map Util.glob_path files;
+    headers = List.map Util.glob_path headers;
     script;
     after;
     depends_on;
@@ -72,28 +74,37 @@ let v ?build ?(hidden = false) ?mtime ?(pkgconf = []) ?script ?after
     hidden;
   }
 
-let locate_source_files t : Source_file.t list =
-  let re = Re.alt t.files |> Re.compile in
-  let ignore = Re.alt t.ignore |> Re.compile in
-  let check_ignore f =
-    match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
-  in
-  let is_special_dir name = List.mem name [ "zenon-build"; ".git"; ".jj" ] in
+let locate_files t patterns =
+  if List.is_empty patterns then []
+  else
+    let re = Re.alt patterns |> Re.compile in
+    let ignore = Re.alt t.ignore |> Re.compile in
+    let check_ignore f =
+      match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
+    in
+    let is_special_dir name = List.mem name [ "zenon-build"; ".git"; ".jj" ] in
 
-  let rec inner path =
-    let entries = Eio.Path.read_dir path in
-    List.concat_map
-      (fun name ->
-        let full_path = Eio.Path.(path / name) in
-        if Eio.Path.is_directory full_path then
-          if check_ignore name && not (is_special_dir name) then inner full_path
-          else []
-        else if Re.execp re (Eio.Path.native_exn full_path) then
-          [ Source_file.v ~root:t.source full_path ]
-        else [])
-      entries
-  in
-  inner t.source
+    let rec inner path =
+      let entries = Eio.Path.read_dir path in
+      List.concat_map
+        (fun name ->
+          let full_path = Eio.Path.(path / name) in
+          if Eio.Path.is_directory full_path then
+            if check_ignore name && not (is_special_dir name) then inner full_path
+            else []
+          else if Re.execp re (Eio.Path.native_exn full_path) then
+            [ full_path ]
+          else [])
+        entries
+    in
+    inner t.source
+
+let locate_source_files t : Source_file.t list =
+  locate_files t t.files
+  |> List.map (fun path -> Source_file.v ~root:t.source path)
+
+let locate_headers t : path list =
+  locate_files t t.headers
 
 let parse_compile_flags f =
   Eio.Path.with_lines f @@ fun lines -> Seq.map String.trim lines |> List.of_seq

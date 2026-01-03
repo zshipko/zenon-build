@@ -18,6 +18,7 @@ depends: [
   "ocamlgraph"
   "ppx_deriving_yaml"
   "cmdliner"
+  "ezjsonm"
   "odoc" {with-doc}
 ]
 build: [

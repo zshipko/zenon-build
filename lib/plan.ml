@@ -55,7 +55,7 @@ module G = Make (struct
     Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
 end)
 
-module Topo = Graph.Topological.Make (G)
+module Cycles = Graph.Cycles.Johnson (G)
 
 type t = { graph : G.t }
 
@@ -74,7 +74,7 @@ let build t (b : Build.t) =
   G.add_vertex t.graph build_node;
   Option.iter (G.add_vertex t.graph) output_node;
   let ignore = Re.compile (Re.alt b.ignore) in
-  List.iter
+  Eio.Fiber.List.iter
     (fun source_file ->
       if Re.execp ignore (Eio.Path.native_exn source_file.path) then ()
       else
@@ -128,14 +128,15 @@ let build t (b : Build.t) =
           (fun node ->
             let edge_label =
               match e with
-              | Some _ -> e  (* If there's a script, use that *)
-              | None -> Some (Linker b.linker)  (* Otherwise use the linker *)
+              | Some _ -> e (* If there's a script, use that *)
+              | None -> Some (Linker b.linker)
+              (* Otherwise use the linker *)
             in
             G.add_edge_e t.graph @@ G.E.create obj_node edge_label node)
           output_node)
     source_files
 
-let run_build t ?(execute = false) ?(execute_args = []) ?pool (b : Build.t) =
+let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
   Util.log "◎ BUILD %s" b.name;
   Option.iter
     (fun s ->
@@ -146,8 +147,6 @@ let run_build t ?(execute = false) ?(execute_args = []) ?pool (b : Build.t) =
   let flags = Flags.v ~compile:(Build.compile_flags b) () in
   let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
   let link_flags = ref b_flags in
-  let max = Domain.recommended_domain_count () in
-  let pool = Option.value ~default:(Eio.Semaphore.make max) pool in
   let count = ref 0 in
   let sources, objs =
     G.fold_succ_e
@@ -175,11 +174,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?pool (b : Build.t) =
             | Compiler (c, flags) ->
                 incr count;
                 let flags = Option.value ~default:(Flags.v ()) flags in
-                Eio.Semaphore.acquire pool;
-                let p =
-                  Eio.Fiber.fork_promise ~sw @@ fun () ->
-                  Fun.protect ~finally:(fun () -> Eio.Semaphore.release pool)
-                  @@ fun () ->
+                let () =
                   let task =
                     Compiler.compile_obj c b.env#process_mgr ~sources
                       ~output:obj ~sw ~build_mtime:b.mtime
@@ -188,7 +183,6 @@ let run_build t ?(execute = false) ?(execute_args = []) ?pool (b : Build.t) =
                   let () = link_flags := Flags.concat !link_flags flags in
                   Option.iter Eio.Process.await_exn task
                 in
-                Eio.Promise.await_exn p;
                 Some obj
             | _ -> None))
       objs
@@ -223,8 +217,25 @@ let run_all ?execute ?args t builds =
       builds
   in
 
+  (* Check command availability before building *)
+  if not (List.is_empty builds) then (
+    let env = (List.hd builds).env in
+    let checker = Command.v env#process_mgr in
+    let required_commands = ref String_set.empty in
+    List.iter
+      (fun (build : Build.t) ->
+        Hashtbl.iter
+          (fun _ compiler ->
+            let cmd = Compiler.get_command_name compiler in
+            required_commands := String_set.add cmd !required_commands)
+          build.compiler_index;
+        let linker_cmd = Linker.get_command_name build.linker in
+        required_commands := String_set.add linker_cmd !required_commands)
+      builds;
+    Command.check_commands checker (String_set.to_list !required_commands));
+
   (* Add build dependency edges to the existing graph *)
-  List.iter
+  Eio.Fiber.List.iter
     (fun build ->
       List.iter
         (fun dep_name ->
@@ -238,78 +249,51 @@ let run_all ?execute ?args t builds =
         build.depends_on)
     builds;
 
-  (* Verify no circular dependencies using topological sort *)
-  let _ =
-    try Topo.fold (fun v acc -> v :: acc) t.graph []
-    with _ ->
-      Fmt.failwith "Circular dependency detected in build dependencies"
-  in
-
-  (* Create a shared semaphore for compilation parallelism across all targets *)
-  let max = Domain.recommended_domain_count () in
-  let pool = Eio.Semaphore.make max in
-
-  (* Compute in-degrees for each build (number of dependencies) *)
-  let in_degrees = Hashtbl.create (List.length builds) in
+  let ndeps = Hashtbl.create (List.length builds) in
   List.iter
     (fun (build : Build.t) ->
-      Hashtbl.add in_degrees build.name (List.length build.depends_on))
+      Hashtbl.add ndeps build.name (List.length build.depends_on))
     builds;
 
   (* Find all builds with no dependencies (in-degree 0) *)
   let ready =
     ref
-      (List.filter
-         (fun (build : Build.t) -> Hashtbl.find in_degrees build.name = 0)
+      (Eio.Fiber.List.filter
+         (fun (build : Build.t) -> Hashtbl.find ndeps build.name = 0)
          builds)
   in
 
   let executed = Hashtbl.create (List.length builds) in
-  let remaining = ref (List.length builds) in
 
   (* Build targets in parallel, level by level *)
-  Eio.Switch.run @@ fun sw ->
-  while !remaining > 0 do
-    if List.is_empty !ready then
-      Fmt.failwith "Build graph error: no ready builds but %d remaining"
-        !remaining;
-
+  while not (List.is_empty !ready) do
     (* Build all ready targets in parallel *)
-    let promises =
-      List.map
+    let builds =
+      Eio.Fiber.List.map
         (fun (build : Build.t) ->
-          Eio.Fiber.fork_promise ~sw @@ fun () ->
-          run_build ?execute ?execute_args:args ~pool t build;
+          run_build ?execute ?execute_args:args t build;
           Hashtbl.add executed build.name ();
           build)
         !ready
     in
 
-    (* Wait for all builds in this level to complete *)
-    let completed = List.map Eio.Promise.await_exn promises in
-
     (* Update in-degrees and find newly ready builds *)
-    let newly_ready = ref [] in
-    List.iter
-      (fun (completed_build : Build.t) ->
-        (* For each build that depends on this completed build *)
-        G.iter_succ
-          (fun succ ->
-            match succ with
-            | Build dependent ->
-                let current_in_degree =
-                  Hashtbl.find in_degrees dependent.name
-                in
-                let new_in_degree = current_in_degree - 1 in
-                Hashtbl.replace in_degrees dependent.name new_in_degree;
-                if
-                  new_in_degree = 0
-                  && not (Hashtbl.mem executed dependent.name)
-                then newly_ready := dependent :: !newly_ready
-            | _ -> ())
-          t.graph (Build completed_build))
-      completed;
-
-    ready := !newly_ready;
-    remaining := !remaining - List.length completed
+    let count = ref 0 in
+    ready :=
+      List.fold_left
+        (fun newly_ready (completed_build : Build.t) ->
+          incr count;
+          (* For each build that depends on this completed build *)
+          G.fold_succ
+            (fun succ acc ->
+              match succ with
+              | Build dependent ->
+                  let n = Int.succ @@ Hashtbl.find ndeps dependent.name in
+                  Hashtbl.replace ndeps dependent.name n;
+                  if n = 0 && not (Hashtbl.mem executed dependent.name) then
+                    dependent :: acc
+                  else acc
+              | _ -> acc)
+            t.graph (Build completed_build) newly_ready)
+        [] builds
   done

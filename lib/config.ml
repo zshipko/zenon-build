@@ -106,6 +106,7 @@ module Build_config = struct
     compilers : string list; [@default default_compiler_names]
     linker : string option; [@default None]
     files : string list; [@default []]
+    headers : string list; [@default []]
     ignore : string list; [@default []]
     flags : Lang_flags.t list; [@default []]
     script : string option; [@default None]
@@ -127,6 +128,7 @@ module Build_config = struct
       compilers = default_compiler_names;
       linker = None;
       files = [];
+      headers = [];
       script = None;
       after = None;
       depends_on = [];
@@ -220,13 +222,10 @@ let init ?mtime ~env path t =
         in
         let linker_name =
           match config.Build_config.linker with
-          | Some linker -> linker (* Specified, so use it *)
+          | Some linker -> linker
           | None -> (
-              (* Not specified, use default logic *)
               match config.target with
-              | Some target
-                when String.starts_with ~prefix:"lib" (Filename.basename target)
-                     && String.ends_with ~suffix:".a" (Filename.basename target)
+              | Some target when Util.is_static_lib (Filename.basename target)
                 ->
                   "ar"
               | _ -> Compiler_config.clang.name)
@@ -266,8 +265,8 @@ let init ?mtime ~env path t =
             ~pkgconf:(t.pkgconf @ config.pkgconf)
             ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
             ~compiler_flags ?output ~source ~files:(t.files @ config.files)
-            ~name ~ignore:(t.ignore @ config.ignore) ~hidden:config.hidden
-            ?mtime env
+            ~headers:config.headers ~name ~ignore:(t.ignore @ config.ignore)
+            ~hidden:config.hidden ?mtime env
         in
         Some build)
     t.build

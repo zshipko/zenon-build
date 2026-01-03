@@ -60,14 +60,53 @@ let rec collect_dependencies build_map name visited =
           (fun acc dep -> collect_dependencies build_map dep acc)
           visited build.Build.depends_on
 
+let load_config env path =
+  match Config.load ~env Eio.Path.(env#fs / path) with
+  | Ok x -> x
+  | Error (`Msg err) -> failwith err
+
+let find_build builds name =
+  match name with
+  | Some name -> List.find_opt (fun b -> b.Build.name = name) builds
+  | None -> ( try Some (List.hd builds) with _ -> None)
+
+let lib_name b =
+  let name = b.Build.name in
+  let name =
+    if String.starts_with ~prefix:"lib" name then
+      String.sub name 3 (String.length name - 3)
+    else name
+  in
+  Filename.remove_extension name
+
+let c_flags b =
+  Hashtbl.find_opt b.Build.compiler_flags "c"
+  |> Option.value ~default:(Flags.v ())
+
+let filter_builds builds names =
+  if List.is_empty names then
+    List.filter_map
+      (fun x -> if x.Build.hidden then None else Some x.Build.name)
+      builds
+  else names
+
+let make_build_map builds =
+  List.fold_left
+    (fun acc b ->
+      Hashtbl.add acc b.Build.name b;
+      acc)
+    (Hashtbl.create (List.length builds))
+    builds
+
+let builds_with_deps build_map names =
+  List.fold_left
+    (fun acc name -> collect_dependencies build_map name acc)
+    String_set.empty names
+
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) () =
   Eio_posix.run @@ fun env ->
-  let x =
-    match Config.load ~env Eio.Path.(env#fs / path) with
-    | Ok x -> x
-    | Error (`Msg err) -> failwith err
-  in
+  let x = load_config env path in
   let builds, x =
     match x with
     | [] ->
@@ -93,34 +132,16 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
           ] )
     | x -> (builds, x)
   in
-  let builds =
-    if List.is_empty builds then
-      List.filter_map
-        (fun x -> if x.Build.hidden then None else Some x.Build.name)
-        x
-    else builds
-  in
-  (* Collect all transitive dependencies *)
-  let build_map =
-    List.fold_left
-      (fun acc b ->
-        Hashtbl.add acc b.Build.name b;
-        acc)
-      (Hashtbl.create (List.length x))
-      x
-  in
-  let builds_with_deps =
-    List.fold_left
-      (fun acc name -> collect_dependencies build_map name acc)
-      String_set.empty builds
-  in
+  let builds = filter_builds x builds in
+  let build_map = make_build_map x in
+  let builds_with_deps_set = builds_with_deps build_map builds in
   let plan = Plan.v () in
   let () =
     List.iter
       (fun build ->
         if
-          String_set.is_empty builds_with_deps
-          || String_set.mem build.Build.name builds_with_deps
+          String_set.is_empty builds_with_deps_set
+          || String_set.mem build.Build.name builds_with_deps_set
         then
           let output =
             match output with
@@ -155,19 +176,14 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
       x
   in
   Plan.run_all ~execute:run ~args:arg plan
-    (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps) x)
+    (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x)
 
 let clean ~path ~builds () =
   Eio_posix.run @@ fun env ->
   if List.is_empty builds then
     Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
   else
-    let path = Eio.Path.(env#fs / path) in
-    let x =
-      match Config.load ~env path with
-      | Ok x -> x
-      | Error (`Msg err) -> failwith err
-    in
+    let x = load_config env path in
     let builds = String_set.of_list builds in
     let x =
       if String_set.is_empty builds then x
@@ -208,17 +224,8 @@ let run_args =
 
 let run ~path ~build ~args () =
   Eio_posix.run @@ fun env ->
-  let path = Eio.Path.(env#fs / path) in
-  let x =
-    match Config.load ~env path with
-    | Ok x -> x
-    | Error (`Msg err) -> failwith err
-  in
-  let b =
-    match build with
-    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
-    | None -> ( try Some (List.hd x) with _ -> None)
-  in
+  let x = load_config env path in
+  let b = find_build x build in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
@@ -236,37 +243,16 @@ let cmd_run =
 
 let pkg ~path ~prefix ~build ~version ?output () =
   Eio_posix.run @@ fun env ->
-  let path = Eio.Path.(env#fs / path) in
-  let x =
-    match Config.load ~env path with
-    | Ok x -> x
-    | Error (`Msg err) -> failwith err
-  in
-  let b =
-    match build with
-    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
-    | None -> ( try Some (List.hd x) with _ -> None)
-  in
+  let x = load_config env path in
+  let b = find_build x build in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
-      let c_flags =
-        Hashtbl.find_opt b.compiler_flags "c"
-        |> Option.value ~default:(Flags.v ())
-      in
-      let flags = Flags.concat b.flags c_flags in
-      let lib_name =
-        match b.output with
-        | Some s ->
-            let s = Eio.Path.native_exn s |> Filename.basename in
-            if String.starts_with ~prefix:"lib" s then
-              Filename.remove_extension @@ String.sub s 3 (String.length s - 3)
-            else b.name
-        | None -> b.name
-      in
+      let flags = Flags.concat b.flags (c_flags b) in
+      let lib_name_str = lib_name b in
       let contents =
-        Pkg_config.generate ~lib_name ~prefix ~version ~requires:b.pkgconf
-          ~cflags:flags.compile ~ldflags:flags.link b.name
+        Pkg_config.generate ~lib_name:lib_name_str ~prefix ~version
+          ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link b.name
       in
       match output with
       | Some path ->
@@ -293,69 +279,111 @@ let cmd_pkg =
   and+ output = output in
   pkg ~path ~build ~prefix ~version ?output ()
 
-let cmake ~path ~build ~version:_ ?output () =
+let makefile ~path ~build ?output () =
   Eio_posix.run @@ fun env ->
-  let path = Eio.Path.(env#fs / path) in
-  let x =
-    match Config.load ~env path with
-    | Ok x -> x
-    | Error (`Msg err) -> failwith err
-  in
-  let b =
-    match build with
-    | Some build -> List.find_opt (fun b -> b.Build.name = build) x
-    | None -> ( try Some (List.hd x) with _ -> None)
-  in
+  let x = load_config env path in
+  let b = find_build x build in
   match b with
   | None -> Fmt.failwith "no target found"
   | Some b -> (
-      let lib_name =
+      let target_name =
         match b.output with
-        | Some s ->
-            let s = Eio.Path.native_exn s |> Filename.basename in
-            if String.starts_with ~prefix:"lib" s then
-              Filename.remove_extension @@ String.sub s 3 (String.length s - 3)
-            else b.name
+        | Some s -> Eio.Path.native_exn s |> Filename.basename
         | None -> b.name
       in
-      let c_flags =
-        Hashtbl.find_opt b.compiler_flags "c"
-        |> Option.value ~default:(Flags.v ())
+      let flags = Flags.concat b.flags (c_flags b) in
+
+      let makefile = Makefile.v () in
+      Makefile.add_comment makefile "Generated by zenon";
+
+      (* Variables *)
+      Makefile.add_variable makefile "CC" "clang";
+      Makefile.add_variable makefile "CXX" "clang++";
+      Makefile.add_variable makefile "LINK" b.linker.Linker.name;
+      Makefile.add_variable makefile "CFLAGS" (String.concat " " flags.compile);
+      Makefile.add_variable makefile "LDFLAGS" (String.concat " " flags.link);
+
+      let source_files = Build.locate_source_files b in
+      let sources =
+        List.map
+          (fun f -> Util.relative_to b.source f.Source_file.path)
+          source_files
       in
-      let cmake = Cmake.v ~project_name:lib_name () in
-      let files =
-        Build.locate_source_files b
-        |> List.map (fun f -> Util.relative_to b.source f.Source_file.path)
+      let objects =
+        List.map (fun src -> Filename.remove_extension src ^ ".o") sources
       in
-      let () =
+
+      Makefile.add_variable makefile "SRCS" (String.concat " " sources);
+      Makefile.add_variable makefile "OBJS" (String.concat " " objects);
+      Makefile.add_variable makefile "TARGET" target_name;
+
+      (* Default target *)
+      Makefile.add_target makefile ~name:"all" ~deps:[ "$(TARGET)" ]
+        ~commands:[];
+
+      (* Link target *)
+      let link_cmd =
         match b.linker.link_type with
-        | Executable -> Cmake.add_executable cmake lib_name files
-        | Shared -> Cmake.add_library cmake ~shared:true lib_name files
-        | Static -> Cmake.add_library cmake ~shared:false lib_name files
+        | Linker.Executable -> "$(CC) $(LDFLAGS) -o $@ $^"
+        | Linker.Static -> "ar rcs $@ $^"
+        | Linker.Shared -> "$(LINK) -shared $(LDFLAGS) -o $@ $^"
       in
-      let dirs =
-        files |> List.map Filename.dirname |> List.sort_uniq String.compare
-      in
-      let () = Cmake.target_include_directories cmake lib_name dirs in
-      let () = Cmake.add_compile_definitions cmake lib_name c_flags.compile in
-      let contents = Cmake.contents cmake in
+      Makefile.add_target makefile ~name:"$(TARGET)" ~deps:[ "$(OBJS)" ]
+        ~commands:[ link_cmd ];
+
+      (* Compile pattern rule *)
+      Makefile.add_target makefile ~name:"%.o" ~deps:[ "%.c" ]
+        ~commands:[ "$(CC) $(CFLAGS) -c $< -o $@" ];
+
+      (* Clean target *)
+      Makefile.add_target makefile ~name:"clean" ~deps:[]
+        ~commands:[ "rm -f $(OBJS) $(TARGET)" ];
+
+      Makefile.add_phony makefile [ "all"; "clean" ];
+
+      let contents = Makefile.contents makefile in
       match output with
       | Some path ->
           Eio.Path.save ~create:(`Or_truncate 0o644)
-            Eio.Path.(env#cwd / path)
+            Eio.Path.(env#fs / path)
             contents
       | None -> print_endline contents)
 
-let cmd_cmake =
-  Cmd.v (Cmd.info "cmake")
+let cmd_make =
+  Cmd.v (Cmd.info "make" ~doc:"Generate Makefile for a build target")
   @@
-  let+ build = build
-  and+ path = path
-  and+ version = version
-  and+ output = output in
-  cmake ~path ~build ~version ?output ()
+  let+ build = build and+ path = path and+ output = output in
+  makefile ~path ~build ?output ()
 
 let graph ~path ~builds ?output () =
+  Eio_posix.run @@ fun env ->
+  let x = load_config env path in
+  let builds = filter_builds x builds in
+  let build_map = make_build_map x in
+  let builds_with_deps_set = builds_with_deps build_map builds in
+  let plan = Plan.v () in
+  let () =
+    List.iter
+      (fun build ->
+        if
+          String_set.is_empty builds_with_deps_set
+          || String_set.mem build.Build.name builds_with_deps_set
+        then Plan.build plan build)
+      x
+  in
+  let dot = Print.to_dot plan in
+  match output with
+  | Some path ->
+      Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) dot
+  | None -> print_endline dot
+
+let cmd_graph =
+  Cmd.v (Cmd.info "graph" ~doc:"Generate DOT graph of build dependencies")
+  @@
+  let+ builds = builds and+ path = path and+ output = output in
+  graph ~path ~builds ?output ()
+
+let info ~path ~builds () =
   Eio_posix.run @@ fun env ->
   let x =
     match Config.load ~env Eio.Path.(env#fs / path) with
@@ -369,7 +397,6 @@ let graph ~path ~builds ?output () =
         x
     else builds
   in
-  (* Collect all transitive dependencies *)
   let build_map =
     List.fold_left
       (fun acc b ->
@@ -383,33 +410,277 @@ let graph ~path ~builds ?output () =
       (fun acc name -> collect_dependencies build_map name acc)
       String_set.empty builds
   in
-  let plan = Plan.v () in
-  let () =
-    List.iter
-      (fun build ->
-        if
-          String_set.is_empty builds_with_deps
-          || String_set.mem build.Build.name builds_with_deps
-        then Plan.build plan build)
+  let targets =
+    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps) x
+  in
+  List.iter
+    (fun (b : Build.t) ->
+      Fmt.pr "@[<v 2>Target: %s@," b.name;
+      (match b.output with
+      | Some p -> Fmt.pr "Output: %s@," (Eio.Path.native_exn p)
+      | None -> Fmt.pr "Output: none@,");
+      Fmt.pr "Type: %s@,"
+        (match b.linker.link_type with
+        | Linker.Executable -> "executable"
+        | Linker.Shared -> "shared library"
+        | Linker.Static -> "static library");
+      Fmt.pr "Linker: %s@," b.linker.name;
+
+      let source_files = Build.locate_source_files b in
+      Fmt.pr "Source files: %d@," (List.length source_files);
+
+      List.iter
+        (fun (f : Source_file.t) ->
+          let ext = Source_file.ext f in
+          let compiler_name =
+            match Hashtbl.find_opt b.compiler_index ext with
+            | Some c -> c.Compiler.name
+            | None -> "unknown"
+          in
+          Fmt.pr "  %s: (compiler %s)@,"
+            (Eio.Path.native_exn f.path)
+            compiler_name)
+        source_files;
+
+      if not (List.is_empty b.depends_on) then
+        Fmt.pr "Dependencies: %a@,"
+          (Fmt.list ~sep:(Fmt.any ", ") Fmt.string)
+          b.depends_on
+      else Fmt.pr "Dependencies: none@,";
+
+      if not (List.is_empty b.pkgconf) then
+        Fmt.pr "Pkg-config: %a@,"
+          (Fmt.list ~sep:(Fmt.any ", ") Fmt.string)
+          b.pkgconf;
+
+      Fmt.pr "@]@.")
+    targets
+
+let cmd_info =
+  Cmd.v (Cmd.info "info" ~doc:"Show build target information and statistics")
+  @@
+  let+ builds = builds and+ path = path in
+  info ~path ~builds ()
+
+let compile_commands ~path ~builds ?output () =
+  Eio_posix.run @@ fun env ->
+  let x =
+    match Config.load ~env Eio.Path.(env#fs / path) with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  let builds =
+    if List.is_empty builds then
+      List.filter_map
+        (fun x -> if x.Build.hidden then None else Some x.Build.name)
+        x
+    else builds
+  in
+  let build_map =
+    List.fold_left
+      (fun acc b ->
+        Hashtbl.add acc b.Build.name b;
+        acc)
+      (Hashtbl.create (List.length x))
       x
   in
-  let dot = Print.to_dot plan in
+  let builds_with_deps =
+    List.fold_left
+      (fun acc name -> collect_dependencies build_map name acc)
+      String_set.empty builds
+  in
+  let targets =
+    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps) x
+  in
+
+  let entries = ref [] in
+  List.iter
+    (fun (b : Build.t) ->
+      let source_files = Build.locate_source_files b in
+      let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
+      let flags = Flags.v ~compile:(Build.compile_flags b) () in
+      let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
+
+      List.iter
+        (fun (source : Source_file.t) ->
+          let ext = Source_file.ext source in
+          match Hashtbl.find_opt b.compiler_index ext with
+          | None -> ()
+          | Some compiler ->
+              let obj =
+                Object_file.of_source ~root:b.source ~build_name:b.name
+                  ~build_dir:Eio.Path.(b.build / "obj")
+                  source
+              in
+              let file_flags =
+                Hashtbl.find_opt b.compiler_flags ext
+                |> Option.value ~default:(Flags.v ())
+              in
+              let final_flags = Flags.concat b_flags file_flags in
+              let command =
+                compiler.Compiler.command ~flags:final_flags ~sources:[ source ]
+                  ~output:obj
+              in
+              let entry =
+                `O
+                  [
+                    ("directory", `String (Eio.Path.native_exn env#cwd));
+                    ("file", `String (Eio.Path.native_exn source.path));
+                    ( "command",
+                      `String
+                        (String.concat " "
+                           (List.map
+                              (fun s ->
+                                if String.contains s ' ' then Fmt.str "\"%s\"" s
+                                else s)
+                              command)) );
+                    ("output", `String (Eio.Path.native_exn obj.path));
+                  ]
+              in
+              entries := entry :: !entries)
+        source_files)
+    targets;
+
+  let json = `A (List.rev !entries) in
+  let contents = Ezjsonm.value_to_string ~minify:false json in
   match output with
   | Some path ->
       Eio.Path.save ~create:(`Or_truncate 0o644)
         Eio.Path.(env#cwd / path)
-        dot
-  | None -> print_endline dot
+        contents
+  | None -> print_endline contents
 
-let cmd_graph =
-  Cmd.v (Cmd.info "graph" ~doc:"Generate DOT graph of build dependencies")
+let cmd_compile_commands =
+  Cmd.v
+    (Cmd.info "compile-commands"
+       ~doc:"Generate compile_commands.json for IDE/LSP integration")
   @@
   let+ builds = builds and+ path = path and+ output = output in
-  graph ~path ~builds ?output ()
+  compile_commands ~path ~builds ?output ()
+
+let install ~path ~builds ~prefix () =
+  Eio_posix.run @@ fun env ->
+  let x =
+    match Config.load ~env Eio.Path.(env#fs / path) with
+    | Ok x -> x
+    | Error (`Msg err) -> failwith err
+  in
+  let builds =
+    if List.is_empty builds then
+      List.filter_map
+        (fun x -> if x.Build.hidden then None else Some x.Build.name)
+        x
+    else builds
+  in
+  let build_map =
+    List.fold_left
+      (fun acc b ->
+        Hashtbl.add acc b.Build.name b;
+        acc)
+      (Hashtbl.create (List.length x))
+      x
+  in
+  let builds_with_deps =
+    List.fold_left
+      (fun acc name -> collect_dependencies build_map name acc)
+      String_set.empty builds
+  in
+  let targets =
+    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps) x
+  in
+
+  List.iter
+    (fun (b : Build.t) ->
+      (* Install the built artifact *)
+      (match b.output with
+      | None -> Fmt.pr "Skipping %s (no output)@." b.name
+      | Some output_path -> (
+          let install_dir =
+            match b.linker.link_type with
+            | Linker.Executable -> Eio.Path.(env#fs / prefix / "bin")
+            | Linker.Shared | Linker.Static ->
+                Eio.Path.(env#fs / prefix / "lib")
+          in
+          Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 install_dir;
+          let filename = Filename.basename (Eio.Path.native_exn output_path) in
+          let dest = Eio.Path.(install_dir / filename) in
+
+          (* Create destination directory if it doesn't exist *)
+          (try Eio.Path.mkdirs ~perm:0o755 ~exists_ok:true install_dir
+           with _ -> ());
+
+          (* Copy the file *)
+          Fmt.pr "INSTALL %s -> %s@."
+            (Eio.Path.native_exn output_path)
+            (Eio.Path.native_exn dest);
+          let contents = Eio.Path.load output_path in
+          Eio.Path.save ~create:(`Or_truncate 0o755) dest contents;
+
+          (* Install pkg-config file for libraries *)
+          match b.linker.link_type with
+          | Linker.Shared | Linker.Static ->
+              let lib_name = lib_name b in
+              let c_flags = c_flags b in
+              let flags = Flags.concat b.flags c_flags in
+              let pc_contents =
+                Pkg_config.generate ~lib_name ~prefix ~version:"1.0.0"
+                  ~requires:b.pkgconf ~cflags:flags.compile ~ldflags:flags.link
+                  b.name
+              in
+              let pc_dir = Eio.Path.(env#fs / prefix / "lib" / "pkgconfig") in
+              (try Eio.Path.mkdirs ~perm:0o755 ~exists_ok:true pc_dir
+               with _ -> ());
+              let pc_file = Eio.Path.(pc_dir / (lib_name ^ ".pc")) in
+              Fmt.pr "INSTALL pkg-config -> %s@." (Eio.Path.native_exn pc_file);
+              Eio.Path.save ~create:(`Or_truncate 0o644) pc_file pc_contents
+          | Linker.Executable -> ()));
+
+      (* Install header files *)
+      let headers = Build.locate_headers b in
+      if not (List.is_empty headers) then (
+        let include_name = lib_name b in
+        let include_dir =
+          Eio.Path.(env#fs / prefix / "include" / include_name)
+        in
+        Eio.Path.mkdirs ~perm:0o755 ~exists_ok:true include_dir;
+        List.iter
+          (fun header_path ->
+            let rel_path = Util.relative_to b.source header_path in
+            let dest = Eio.Path.(include_dir / rel_path) in
+            let dest_dir = Eio.Path.(include_dir / Filename.dirname rel_path) in
+
+            (try Eio.Path.mkdirs ~perm:0o755 ~exists_ok:true dest_dir
+             with _ -> ());
+
+            Fmt.pr "INSTALL %s -> %s@."
+              (Eio.Path.native_exn header_path)
+              (Eio.Path.native_exn dest);
+            let contents = Eio.Path.load header_path in
+            Eio.Path.save ~create:(`Or_truncate 0o644) dest contents)
+          headers))
+    targets
+
+let cmd_install =
+  Cmd.v
+    (Cmd.info "install"
+       ~doc:"Install built artifacts to specified prefix directory")
+  @@
+  let+ builds = builds and+ path = path and+ prefix = prefix in
+  install ~path ~builds ~prefix ()
 
 let main () =
   Cmd.eval
   @@ Cmd.group (Cmd.info "zenon")
-       [ cmd_build; cmd_run; cmd_clean; cmd_pkg; cmd_cmake; cmd_graph ]
+       [
+         cmd_build;
+         cmd_run;
+         cmd_clean;
+         cmd_pkg;
+         cmd_make;
+         cmd_graph;
+         cmd_info;
+         cmd_compile_commands;
+         cmd_install;
+       ]
 
 let () = if !Sys.interactive then () else exit (main ())

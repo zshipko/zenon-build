@@ -101,13 +101,6 @@ let gfortran =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let rustc =
-  {
-    name = "rustc";
-    command = c_like [ "rustc" ];
-    ext = String_set.of_list [ "rs" ];
-  }
-
 let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
   let st =
     try
@@ -143,5 +136,6 @@ let find_by_name compilers c =
       | "gcc" -> Some gcc
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
-      | "rustc" | "rust" -> Some rustc
       | _ -> None)
+
+let get_command_name t = t.name

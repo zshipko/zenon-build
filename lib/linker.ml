@@ -86,23 +86,6 @@ let gxx = { name = "g++"; command = c_like [ "g++" ]; link_type = Executable }
 let gfortran =
   { name = "gfortran"; command = c_like [ "gfortran" ]; link_type = Executable }
 
-let rustc =
-  { name = "rustc"; command = c_like [ "rustc" ]; link_type = Executable }
-
-let rustc_shared =
-  {
-    name = "rustc";
-    command = c_like [ "rustc"; "--crate-type=cdylib" ];
-    link_type = Shared;
-  }
-
-let rustc_static =
-  {
-    name = "rustc";
-    command = c_like [ "rustc"; "--crate-type=staticlib" ];
-    link_type = Static;
-  }
-
 let find_by_name linkers l =
   match List.find_opt (fun x -> x.name = l) linkers with
   | Some x -> Some x
@@ -117,7 +100,6 @@ let find_by_name linkers l =
       | "gcc" -> Some gcc
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
-      | "rustc" | "rust" -> Some rustc
-      | "rustc-shared" | "rust-shared" -> Some rustc_shared
-      | "rustc-static" | "rust-static" -> Some rustc_static
       | _ -> None)
+
+let get_command_name t = t.name

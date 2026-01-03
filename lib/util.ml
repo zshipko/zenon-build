@@ -34,3 +34,7 @@ let glob =
     ~expand_braces:true
 
 let glob_path path = glob (Filename.concat "**" path)
+
+let is_static_lib (filename : string) =
+  String.starts_with ~prefix:"lib" filename
+  && String.ends_with ~suffix:".a" filename

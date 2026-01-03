@@ -61,9 +61,8 @@ let flags ~env names =
   Flags.v ~compile ~link ()
 
 let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
-    ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) ?lib_name
+    ?(include_dir = "include") ?(lib_dir = "lib") ?(requires = []) ~lib_name
     name ~cflags ~ldflags =
-  let lib_name = Option.value ~default:name lib_name in
   Fmt.str
     "prefix=%s\n\
      includedir=${prefix}/%s/%s\n\
@@ -74,7 +73,7 @@ let generate ?(prefix = "/usr/local") ?(version = "0.0.0")
      Cflags: -I${includedir} %a\n\
      Libs: -L${libdir} -l%s %a\n\
      Requires: %a\n"
-    prefix include_dir lib_dir name name name version
+    prefix include_dir lib_name lib_dir name name version
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)
     cflags lib_name
     (Fmt.list ~sep:(Fmt.const Fmt.string " ") Fmt.string)

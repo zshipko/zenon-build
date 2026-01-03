@@ -2,6 +2,24 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
+## Installation
+
+Using [opam](https://opam.ocaml.org/):
+
+```sh
+$ opam pin add -y git+https://codeberg.org/zshipko/zenon.git
+```
+
+Or [dune](https://dune.build/):
+
+```sh
+$ git clone https://codeberg.org/zshipko/zenon.git
+$ cd zenon
+$ dune pkg lock
+$ dune build
+$ dune install
+```
+
 ## Running
 
 ```sh
@@ -174,7 +192,7 @@ flags:
 
 ### Custom compilers/linkers
 
-`zenon` supports `clang`, `clang++`, `flang` `ghc`, `ispc`, and `rustc` by default. `gcc`, `g++` and `gfortran` are also
+`zenon` supports `clang`, `clang++`, `flang`, `ghc`, and `ispc` by default. `gcc`, `g++` and `gfortran` are also
 supported, but not enabled by default. 
 
 It is possible to define custom compilers at the top level, then reference by name in build targets:
