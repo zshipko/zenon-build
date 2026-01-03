@@ -83,6 +83,24 @@ let ghc =
     link_type = Executable;
   }
 
+let mlton =
+  {
+    name = "mlton";
+    command =
+      (fun ~flags ~objs ~output ->
+        let objs =
+          List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+        in
+        [ "mlton"; "-o"; Eio.Path.native_exn output ]
+        @ (List.map (fun x -> [ "-link-opt"; x ]) flags.Flags.link
+          |> List.flatten)
+        @ objs);
+    link_type = Executable;
+  }
+
+let ats2 =
+  { name = "patscc"; command = c_like [ "patscc" ]; link_type = Executable }
+
 let flang =
   {
     name = "flang-new";
@@ -112,4 +130,6 @@ let find_by_name linkers l =
       | "g++" | "gxx" -> Some gxx
       | "gfortran" -> Some gfortran
       | "ape" | "apelink" -> Some ape
+      | "sml" | "mlton" -> Some mlton
+      | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | _ -> None)

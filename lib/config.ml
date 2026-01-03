@@ -29,6 +29,12 @@ module Compiler_config = struct
   let ghc =
     { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
 
+  let mlton =
+    { name = "mlton"; ext = []; command = None; link_type = Linker.Executable }
+
+  let ats2 =
+    { name = "ats2"; ext = []; command = None; link_type = Linker.Executable }
+
   let compiler compilers t =
     match t.command with
     | Some cmd ->
@@ -97,13 +103,11 @@ module Build_config = struct
     [@@deriving yaml]
   end
 
-  let default_compiler_names = []
-
   type t = {
     name : string option; [@default None]
     root : string option;
     target : string option; [@default None]
-    compilers : string list; [@default default_compiler_names]
+    compilers : string list; [@default []]
     linker : string option; [@default None]
     files : string list; [@default []]
     headers : string list; [@default []]
@@ -126,7 +130,7 @@ module Build_config = struct
       target = Some "a.out";
       root = Some ".";
       ignore = [];
-      compilers = default_compiler_names;
+      compilers = [];
       linker = None;
       files = [];
       headers = [];
@@ -148,6 +152,8 @@ let default_compilers =
     Compiler_config.clangxx;
     Compiler_config.ispc;
     Compiler_config.ghc;
+    Compiler_config.mlton;
+    Compiler_config.ats2;
   ]
 
 let default_linkers =
@@ -156,6 +162,8 @@ let default_linkers =
     Compiler_config.clangxx;
     Compiler_config.{ clang with name = "ar" };
     Compiler_config.ghc;
+    Compiler_config.mlton;
+    Compiler_config.ats2;
   ]
 
 type t = {
@@ -196,9 +204,11 @@ let rec read_file_or_default path =
 
 let init ?mtime ~env path t =
   (* Parse .gitignore from the root path - returns Re.t list *)
-  let gitignore_patterns = Util.parse_gitignore Eio.Path.(path / ".gitignore") in
+  let gitignore_patterns =
+    Util.parse_gitignore Eio.Path.(path / ".gitignore")
+  in
   (* Config ignore patterns are strings that need to be converted *)
-  let config_ignore_patterns = List.map Util.glob_path (t.ignore) in
+  let config_ignore_patterns = List.map Util.glob_path t.ignore in
 
   List.filter_map
     (fun config ->

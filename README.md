@@ -2,9 +2,9 @@
 
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
-By default, `zenon` enables `clang`, `clang++`, `flang`, `ghc`, and `ispc`.
+By default, `zenon` enables `clang` (C), `clang++` (C++), `flang` (Fortran), `ispc` (ISPC), `ghc` (Haskell), `mlton` (SML) and `patscc` (ATS2).
 
-`cosmocc`, `cosmoc++`, `gcc`, `g++` and `gfortran` are also supported, but not automatically enabled. 
+Additionally, `cosmocc`, `cosmoc++`, `gcc`, `g++` and `gfortran` are also supported, but not automatically enabled. 
 
 ## Installation
 

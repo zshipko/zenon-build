@@ -18,12 +18,11 @@ let targets =
 
 let cflag =
   let doc = "Compiler flag" in
-  Arg.(value & opt_all string [] & info [ "flag"; "cflag" ] ~doc ~docv:"FLAG")
+  Arg.(value & opt_all string [] & info [ "cflag"; "c" ] ~doc ~docv:"FLAG")
 
 let ldflag =
   let doc = "Linker flag" in
-  Arg.(
-    value & opt_all string [] & info [ "flag:link"; "ldflag" ] ~doc ~docv:"FLAG")
+  Arg.(value & opt_all string [] & info [ "lflag"; "l" ] ~doc ~docv:"FLAG")
 
 let ignore =
   let doc = "Ignore file" in
@@ -309,7 +308,8 @@ let makefile ~path ~targets ?output () =
   let contents = Makefile.generate_for_builds builds in
   match output with
   | Some path ->
-      Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#fs / path)
+      Eio.Path.save ~create:(`Or_truncate 0o644)
+        Eio.Path.(env#fs / path)
         contents
   | None -> print_endline contents
 
@@ -342,7 +342,7 @@ let graph ~path ~builds ?output () =
   | None -> print_endline dot
 
 let cmd_graph =
-  Cmd.v (Cmd.info "graph" ~doc:"Generate DOT graph of build dependencies")
+  Cmd.v (Cmd.info "graph" ~doc:"Generate graphviz graph of build dependencies")
   @@
   let+ builds = targets and+ path = path and+ output = output in
   graph ~path ~builds ?output ()

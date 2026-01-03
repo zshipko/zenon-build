@@ -3,7 +3,6 @@ open Flags
 open Source_file
 open Linker
 open Compiler
-open Compiler_set
 module Util = Util
 module Build = Build
 module Pkg_config = Pkg_config

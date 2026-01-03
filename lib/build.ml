@@ -1,5 +1,4 @@
 open Types
-open Compiler_set
 
 type t = {
   env : Eio_posix.stdenv;
@@ -68,7 +67,8 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     depends_on;
     flags = Option.value ~default:(Flags.v ()) flags;
     output;
-    ignore; (* Already Re.t list from config.ml *)
+    ignore;
+    (* Already Re.t list from config.ml *)
     name;
     compiler_flags;
     disable_cache;

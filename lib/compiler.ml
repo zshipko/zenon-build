@@ -88,6 +88,30 @@ let ghc =
     ext = String_set.of_list [ "hs"; "lhs" ];
   }
 
+let mlton =
+  {
+    name = "mlton";
+    command =
+      (fun ~flags ~sources:_ ~output ->
+        [
+          "mlton";
+          "-stop";
+          "o";
+          "-o";
+          Eio.Path.native_exn output.Object_file.path;
+        ]
+        @ (List.map (fun x -> [ "-cc-opt"; x ]) flags.compile |> List.flatten)
+        @ [ Eio.Path.native_exn output.source.path ]);
+    ext = String_set.of_list [ "sml"; "mlb" ];
+  }
+
+let ats2 =
+  {
+    name = "patscc";
+    command = c_like [ "patscc" ];
+    ext = String_set.of_list [ "dats"; "pats" ];
+  }
+
 let flang =
   {
     name = "flang-new";
@@ -156,4 +180,6 @@ let find_by_name compilers c =
       | "gfortran" -> Some gfortran
       | "cosmocc" -> Some cosmocc
       | "cosmoc++" -> Some cosmocpp
+      | "sml" | "mlton" -> Some mlton
+      | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
       | _ -> None)
