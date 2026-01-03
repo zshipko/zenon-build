@@ -20,6 +20,29 @@ will build just the `example` target.
 
 For full command line commands and flags, see the output of `zenon --help`
 
+`zenon` can also detect and build source files without a configuration file:
+
+```sh
+$ zenon build -o example
+```
+
+When run without a `zenon.yaml` file, zenon will:
+- automatically discover source files in the current directory
+- detect the appropriate compiler based on file extensions
+- build an executable with a default name based on the directory or detected sources
+
+You can also specify source files directly via the command line using the `-f` flag:
+
+```sh
+$ zenon build -f main.c -f utils.c
+```
+
+Glob patterns are also supported:
+
+```sh
+$ zenon build -f 'src/*.c'
+```
+
 
 ## Configuration
 
