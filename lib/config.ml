@@ -195,6 +195,11 @@ let rec read_file_or_default path =
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
+  (* Parse .gitignore from the root path - returns Re.t list *)
+  let gitignore_patterns = Util.parse_gitignore Eio.Path.(path / ".gitignore") in
+  (* Config ignore patterns are strings that need to be converted *)
+  let config_ignore_patterns = List.map Util.glob_path (t.ignore) in
+
   List.filter_map
     (fun config ->
       let ok =
@@ -262,12 +267,17 @@ let init ?mtime ~env path t =
           | None -> (
               match config.target with Some p -> p | None -> "default")
         in
+        (* Combine gitignore patterns (Re.t) with config ignore patterns (strings) *)
+        let build_ignore_patterns = List.map Util.glob_path config.ignore in
+        let all_ignore =
+          gitignore_patterns @ config_ignore_patterns @ build_ignore_patterns
+        in
         let build =
           Build.v ~parallel:config.parallel ?script:config.script
             ~pkgconf:(t.pkgconf @ config.pkgconf)
             ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
             ~compiler_flags ?output ~source ~files:(t.files @ config.files)
-            ~headers:config.headers ~name ~ignore:(t.ignore @ config.ignore)
+            ~headers:config.headers ~name ~ignore:all_ignore
             ~hidden:config.hidden ?mtime env
         in
         Some build)

@@ -27,7 +27,8 @@
   ocamlgraph
   ppx_deriving_yaml
   cmdliner
-  ezjsonm)
+  ezjsonm
+  progress)
  (tags (build)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

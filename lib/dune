@@ -1,6 +1,6 @@
 (library
  (name zenon)
  (public_name zenon)
- (libraries eio_posix yaml re ocamlgraph fmt)
+ (libraries eio_posix yaml re ocamlgraph fmt progress progress.engine)
  (preprocess
   (pps ppx_deriving_yaml)))

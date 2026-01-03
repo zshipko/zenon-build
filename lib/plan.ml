@@ -136,11 +136,12 @@ let build t (b : Build.t) =
           output_node)
     source_files
 
-let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
-  Util.log "◎ BUILD %s" b.name;
+let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
+    (b : Build.t) =
+  Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
-      Util.log "• SCRIPT %s" s;
+      if verbose then Util.log "• SCRIPT %s" s;
       Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
@@ -162,6 +163,44 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
         | _ -> (sources, objs))
       t.graph (Build b) ([], [])
   in
+  let total_files = List.length objs in
+  let completed = Atomic.make 0 in
+  let use_progress = total_files > 3 && not verbose in
+  let start_time = Unix.gettimeofday () in
+
+  (* Spinner frames using Unicode characters *)
+  let spinner = [| "◜"; "◝"; "◞"; "◟" |] in
+  let spinner_idx = ref 0 in
+
+  (* Truncate filename for display *)
+  let truncate_path path max_len =
+    if String.length path <= max_len then path
+    else
+      let len = String.length path in
+      "..." ^ String.sub path (len - max_len + 3) (max_len - 3)
+  in
+
+  (* Create an animated progress bar *)
+  let report_progress current_file =
+    let n = Atomic.fetch_and_add completed 1 + 1 in
+    if use_progress then (
+      let elapsed = Unix.gettimeofday () -. start_time in
+      let percent = float_of_int n /. float_of_int total_files *. 100.0 in
+      let bar_width = 20 in
+      let filled = int_of_float (float_of_int bar_width *. percent /. 100.0) in
+      let bar =
+        let buf = Buffer.create (bar_width * 3) in
+        for i = 0 to bar_width - 1 do
+          Buffer.add_string buf (if i < filled then "█" else "░")
+        done;
+        Buffer.contents buf
+      in
+      spinner_idx := (!spinner_idx + 1) mod Array.length spinner;
+      let file_display = truncate_path current_file 50 in
+      Fmt.epr "\r%s [%s] %.0f%% (%d/%d) %.1fs • %s%!" spinner.(!spinner_idx) bar
+        percent n total_files elapsed file_display)
+  in
+
   let visited_flags = Hashtbl.create 8 in
   let objs =
     Eio.Switch.run @@ fun sw ->
@@ -177,9 +216,10 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
                 incr count;
                 let flags = Option.value ~default:(Flags.v ()) flags in
                 let () =
+                  let filepath = Util.relative_to b.source obj.source.path in
                   let task =
                     Compiler.compile_obj c b.env#process_mgr ~sources
-                      ~output:obj ~sw ~build_mtime:b.mtime
+                      ~output:obj ~sw ~build_mtime:b.mtime ~verbose
                       (Flags.concat b_flags flags)
                   in
                   let key =
@@ -190,21 +230,31 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
                   (if not (Hashtbl.mem visited_flags key) then
                      let () = Hashtbl.add visited_flags key true in
                      link_flags := Flags.concat !link_flags flags);
-                  Option.iter Eio.Process.await_exn task
+                  Option.iter Eio.Process.await_exn task;
+                  report_progress filepath
                 in
                 Some obj
             | _ -> None))
       objs
   in
+  (* Clear progress line and show completion *)
+  let elapsed = Unix.gettimeofday () -. start_time in
+  if use_progress then
+    (* Clear the line first with spaces, then write the completion message *)
+    Fmt.epr "\r%s\r" (String.make 100 ' ');
+  if total_files > 0 then
+    Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
+
   Option.iter
     (fun output ->
       if !count > 0 then (
-        Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
+        if verbose then
+          Util.log "⁕ LINK(%s) %s" b.linker.name (Eio.Path.native_exn output);
         Linker.link b.linker b.env#process_mgr ~objs ~output ~flags:!link_flags))
     b.output;
   Option.iter
     (fun s ->
-      Util.log "• SCRIPT %s" s;
+      if verbose then Util.log "• SCRIPT %s" s;
       Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
     b.after;
   if execute then
@@ -214,7 +264,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
         Eio.Process.run b.env#process_mgr
           (Eio.Path.native_exn exe :: execute_args)
 
-let run_all ?execute ?args t builds =
+let run_all ?execute ?args ?(verbose = false) t builds =
   let build_map =
     List.fold_left
       (fun acc (build : Build.t) ->
@@ -280,7 +330,7 @@ let run_all ?execute ?args t builds =
     let builds =
       Eio.Fiber.List.map
         (fun (build : Build.t) ->
-          run_build ?execute ?execute_args:args t build;
+          run_build ?execute ?execute_args:args ~verbose t build;
           Hashtbl.add executed build.name ();
           build)
         !ready

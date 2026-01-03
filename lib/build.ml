@@ -68,7 +68,7 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     depends_on;
     flags = Option.value ~default:(Flags.v ()) flags;
     output;
-    ignore = List.map Util.glob_path ignore;
+    ignore; (* Already Re.t list from config.ml *)
     name;
     compiler_flags;
     disable_cache;
@@ -82,25 +82,38 @@ let is_special_dir name = String_set.mem name special_dirs
 let locate_files t patterns =
   if List.is_empty patterns then []
   else
-    let re = Re.alt patterns |> Re.compile in
     let ignore = Re.alt t.ignore |> Re.compile in
     let check_ignore f =
       match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
     in
-    let rec inner path =
+    let rec collect_all path =
       let entries = Eio.Path.read_dir path in
       List.concat_map
         (fun name ->
           let full_path = Eio.Path.(path / name) in
           if Eio.Path.is_directory full_path then
             if check_ignore name && not (is_special_dir name) then
-              inner full_path
+              collect_all full_path
             else []
-          else if Re.execp re (Eio.Path.native_exn full_path) then [ full_path ]
-          else [])
+          else [ full_path ])
         entries
     in
-    inner t.source
+    (* Collect all files first *)
+    let all_files = collect_all t.source in
+    (* Match files in pattern order, preserving order from config *)
+    let seen = Hashtbl.create (List.length all_files) in
+    List.concat_map
+      (fun pattern ->
+        let re = Re.compile pattern in
+        List.filter_map
+          (fun path ->
+            let path_str = Eio.Path.native_exn path in
+            if Re.execp re path_str && not (Hashtbl.mem seen path_str) then (
+              Hashtbl.add seen path_str true;
+              Some path)
+            else None)
+          all_files)
+      patterns
 
 let locate_source_files t : Source_file.t list =
   locate_files t t.files

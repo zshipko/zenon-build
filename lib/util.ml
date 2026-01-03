@@ -1,4 +1,4 @@
-let log fmt = Fmt.epr (fmt ^^ "\n%!")
+let log fmt = Fmt.epr (fmt ^^ "@.")
 
 let ext path =
   let s =
@@ -35,6 +35,30 @@ let glob =
 
 let glob_path path = glob (Filename.concat "**" path)
 
+let gitignore_to_glob pattern =
+  (* gitignore patterns should not get **/ prefix if they contain / *)
+  if String.contains pattern '/' then glob pattern else glob_path pattern
+
 let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
   && String.ends_with ~suffix:".a" filename
+
+let parse_gitignore path =
+  if Eio.Path.is_file path then
+    Eio.Path.with_lines path @@ fun lines ->
+    Seq.filter_map
+      (fun line ->
+        let line = String.trim line in
+        if String.length line = 0 || String.starts_with ~prefix:"#" line then
+          None
+        else
+          let pattern =
+            if String.starts_with ~prefix:"/" line then
+              (* Remove leading / for anchored patterns *)
+              String.sub line 1 (String.length line - 1)
+            else line
+          in
+          Some (gitignore_to_glob pattern))
+      lines
+    |> List.of_seq
+  else []

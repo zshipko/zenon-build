@@ -115,7 +115,8 @@ let gfortran =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
+let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
+    =
   let st =
     try
       Option.some
@@ -125,14 +126,16 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime flags =
   in
   match st with
   | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
-      Util.log "• CACHE %s -> %s"
-        (Eio.Path.native_exn output.source.path)
-        (Eio.Path.native_exn output.Object_file.path);
+      if verbose then
+        Util.log "• CACHE %s -> %s"
+          (Eio.Path.native_exn output.source.path)
+          (Eio.Path.native_exn output.Object_file.path);
       None
   | _ ->
-      Util.log "• COMPILE(%s) %s -> %s" t.name
-        (Eio.Path.native_exn output.source.path)
-        (Eio.Path.native_exn output.Object_file.path);
+      if verbose then
+        Util.log "• COMPILE(%s) %s -> %s" t.name
+          (Eio.Path.native_exn output.source.path)
+          (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
       Some (Eio.Process.spawn mgr cmd ~sw)

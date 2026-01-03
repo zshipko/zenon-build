@@ -1,2 +1,0 @@
-- Add .gitignore parsing
-- Finish makefile generation
