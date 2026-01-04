@@ -1,8 +1,58 @@
 let lock = Mutex.create ()
+let spinner_frames = [| "◜"; "◝"; "◞"; "◟" |]
+let spinner_idx = ref 0
+
+(* Progress bar state for non-verbose mode *)
+type progress_state = { mutable current : int; total : int; is_tty : bool }
+
+let progress : progress_state option ref = ref None
+
+let init_progress total =
+  if Unix.isatty Unix.stderr && total > 0 then
+    progress := Some { current = 0; total; is_tty = true }
+
+let finalize_progress () =
+  match !progress with
+  | Some p when p.is_tty ->
+      (* Clear the progress line *)
+      Fmt.epr "\r\027[K%!";
+      progress := None
+  | _ -> progress := None
 
 let log ?(verbose = true) fmt =
   Mutex.protect lock @@ fun () ->
   if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
+
+let log_spinner ?(verbose = true) fmt =
+  if verbose then
+    (* Verbose mode: detailed logging with bullets *)
+    Mutex.protect lock @@ fun () -> Fmt.epr ("• " ^^ fmt ^^ "@.")
+  else
+    (* Non-verbose mode: update progress bar *)
+    Fmt.kstr
+      (fun msg ->
+        Mutex.protect lock @@ fun () ->
+        match !progress with
+        | Some p ->
+            p.current <- p.current + 1;
+            let frame =
+              spinner_frames.(!spinner_idx mod Array.length spinner_frames)
+            in
+            incr spinner_idx;
+            let percent =
+              if p.total > 0 then (p.current * 100) / p.total else 0
+            in
+            let bar_width = 20 in
+            let filled = (bar_width * percent) / 100 in
+            let bar =
+              String.concat ""
+                (List.init bar_width (fun i -> if i < filled then "█" else "░"))
+            in
+            (* Print with carriage return to overwrite the line *)
+            Fmt.epr "\r%s [%s] %d%% (%d/%d) %s%!" frame bar percent p.current
+              p.total msg
+        | None -> ())
+      fmt
 
 let ext path =
   let s =

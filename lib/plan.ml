@@ -185,6 +185,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
 
   let start = Unix.gettimeofday () in
 
+  (* Initialize progress bar for non-verbose mode *)
+  if not verbose then Util.init_progress (List.length objs);
+
   Eio.Switch.run @@ fun sw ->
   let objs =
     (if b.parallel then fun f x -> Eio.Fiber.List.filter_map f x
@@ -264,6 +267,8 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
       Util.log ~verbose "• SCRIPT %s" s;
       run_script b.env#process_mgr ~build_dir:b.build s)
     b.after;
+  (* Finalize progress bar for non-verbose mode *)
+  if not verbose then Util.finalize_progress ();
   Util.log "✓ %s (%fsec) " b.name (Unix.gettimeofday () -. start);
   if execute then
     match b.output with

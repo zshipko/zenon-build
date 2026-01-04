@@ -132,12 +132,12 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false)
   in
   match st with
   | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
-      Util.log ~verbose "• CACHE %s -> %s"
+      Util.log_spinner ~verbose "CACHE %s -> %s"
         (Eio.Path.native_exn output.source.path)
         (Eio.Path.native_exn output.Object_file.path);
       None
   | _ ->
-      Util.log ~verbose "• COMPILE(%s) %s -> %s" t.name
+      Util.log_spinner ~verbose "COMPILE(%s) %s -> %s" t.name
         (Eio.Path.native_exn output.source.path)
         (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
