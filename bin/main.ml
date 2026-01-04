@@ -709,8 +709,9 @@ let main () =
   | Failure msg ->
       Fmt.epr "ERROR failure: %s\n" msg;
       2
+  | Eio.Exn.Multiple _exn -> 2
   | exn ->
       Fmt.epr "ERROR exception: %a\n" Fmt.exn exn;
-      3
+      -1
 
 let () = if !Sys.interactive then () else exit (main ())

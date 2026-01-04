@@ -104,7 +104,7 @@ let mlton =
 let ats2 =
   {
     name = "patscc";
-    command = c_like [ "patscc" ];
+    command = c_like [ "patscc"; "-Wno-unused-command-line-argument" ];
     ext = String_set.of_list [ "dats"; "pats" ];
   }
 
@@ -115,8 +115,8 @@ let flang =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) ~fs
-    flags =
+let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
+    =
   let st =
     try
       Option.some
@@ -126,35 +126,21 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) ~fs
   in
   match st with
   | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
-      if verbose then
-        Util.log "• CACHE %s -> %s"
-          (Eio.Path.native_exn output.source.path)
-          (Eio.Path.native_exn output.Object_file.path);
-      (None, None)
+      Util.log ~verbose "• CACHE %s -> %s"
+        (Eio.Path.native_exn output.source.path)
+        (Eio.Path.native_exn output.Object_file.path);
+      None
   | _ ->
-      if verbose then
-        Util.log "• COMPILE(%s) %s -> %s" t.name
-          (Eio.Path.native_exn output.source.path)
-          (Eio.Path.native_exn output.Object_file.path);
+      Util.log ~verbose "• COMPILE(%s) %s -> %s" t.name
+        (Eio.Path.native_exn output.source.path)
+        (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
-      (* Create log file for compiler output *)
-      let log_path =
-        let obj_path = Eio.Path.native_exn output.Object_file.path in
-        Eio.Path.(fs / (obj_path ^ ".log"))
-      in
-      Util.mkparent log_path;
-      let log_file =
-        Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) log_path
-      in
-      let process =
-        Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file
-      in
-      (Some (process, log_path), Some log_path)
+      let process = Eio.Process.spawn mgr cmd ~sw in
+      Some process
 
-let builtin = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
-let all = ref builtin
 let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
+let all = ref default
 
 let register compiler =
   if not (List.exists (fun c -> c.name = compiler.name) !all) then

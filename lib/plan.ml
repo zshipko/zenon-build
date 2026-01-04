@@ -54,7 +54,7 @@ module G = Make (struct
     Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
 end)
 
-module Cycles = Graph.Cycles.Johnson (G)
+let error_msg name msg = Printf.sprintf "❌ %s\n%s" name msg
 
 type t = { graph : G.t }
 
@@ -126,10 +126,7 @@ let build t (b : Build.t) =
         Option.iter
           (fun node ->
             let edge_label =
-              match e with
-              | Some _ -> e (* If there's a script, use that *)
-              | None -> Some (Linker b.linker)
-              (* Otherwise use the linker *)
+              match e with Some _ -> e | None -> Some (Linker b.linker)
             in
             G.add_edge_e t.graph @@ G.E.create obj_node edge_label node)
           output_node)
@@ -137,11 +134,10 @@ let build t (b : Build.t) =
 
 let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
     (b : Build.t) =
-  (* Only log target name if not using shared progress (no target line assigned) *)
   Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
-      if verbose then Util.log "• SCRIPT %s" s;
+      Util.log ~verbose "• SCRIPT %s" s;
       Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
@@ -163,14 +159,14 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
         | _ -> (sources, objs))
       t.graph (Build b) ([], [])
   in
-  (* Auto-select linker based on source file extensions if no explicit linker was set *)
   let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
-  let total_files = List.length objs in
-  let start_time = Unix.gettimeofday () in
 
   let visited_flags = Hashtbl.create 8 in
+
+  let start = Unix.gettimeofday () in
+
+  Eio.Switch.run @@ fun sw ->
   let objs =
-    Eio.Switch.run @@ fun sw ->
     (if b.parallel then fun f x -> Eio.Fiber.List.filter_map f x
      else List.filter_map)
       (fun (v', obj) ->
@@ -183,7 +179,6 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                 incr count;
                 let flags = Option.value ~default:(Flags.v ()) flags in
                 let () =
-                  let filepath = Util.relative_to b.source obj.source.path in
                   let combined_flags = Flags.concat b_flags flags in
                   let key =
                     c.name
@@ -191,25 +186,13 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     ^ String.concat "_" flags.compile
                   in
                   try
-                    let task, _log_path_opt =
+                    let task =
                       Compiler.compile_obj c b.env#process_mgr ~sources
                         ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                        ~fs:b.env#fs combined_flags
+                        combined_flags
                     in
                     (match task with
-                    | Some (process, log_path) -> (
-                        try
-                          Eio.Process.await_exn process;
-                          (* Delete log file on success *)
-                          try Eio.Path.unlink log_path with _ -> ()
-                        with exn ->
-                          (* On error, show the log file contents *)
-                          let log_contents =
-                            Eio.Path.load log_path |> String.trim
-                          in
-                          if String.length log_contents > 0 then
-                            Fmt.epr "\n%s\n%!" log_contents;
-                          raise exn)
+                    | Some process -> Eio.Process.await_exn process
                     | None -> ());
                     if not (Hashtbl.mem visited_flags key) then
                       let () = Hashtbl.add visited_flags key true in
@@ -218,38 +201,29 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     let cmd =
                       c.command ~sources ~flags:combined_flags ~output:obj
                     in
-                    Fmt.failwith
+                    let filepath = Util.relative_to b.source obj.source.path in
+                    Util.log
                       "compilation failed for '%s' in target '%s'\n\
-                       \tcommand: %s\n\
-                       \tmessage: %a"
-                      filepath b.name (String.concat " " cmd) Fmt.exn exn
+                       \tcommand: %s\n"
+                      filepath b.name (String.concat " " cmd);
+                    Util.log ~verbose "\tmessage: %a" Fmt.exn exn;
+                    failwith (b.name ^ " failed")
                 in
                 Some obj
             | _ -> None))
       objs
   in
-  (* Show completion *)
-  let elapsed = Unix.gettimeofday () -. start_time in
-  if total_files > 0 then
-    Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
-
   Option.iter
     (fun output ->
-      if verbose then
-        Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
-      Eio.Switch.run @@ fun sw ->
-      let log_path =
-        Linker.link linker b.env#process_mgr ~sw ~fs:b.env#fs ~objs ~output
-          ~flags:!link_flags
-      in
-      (* Delete log file on success *)
-      try Eio.Path.unlink log_path with _ -> ())
+      Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
     b.output;
   Option.iter
     (fun s ->
-      if verbose then Util.log "• SCRIPT %s" s;
+      Util.log ~verbose "• SCRIPT %s" s;
       Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
     b.after;
+  Util.log "✓ %s (%fsec) " b.name (Unix.gettimeofday () -. start);
   if execute then
     match b.output with
     | None -> Fmt.failwith "target %s has no output" b.name

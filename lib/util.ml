@@ -1,4 +1,8 @@
-let log fmt = Fmt.epr (fmt ^^ "@.")
+let lock = Mutex.create ()
+
+let log ?(verbose = true) fmt =
+  Mutex.protect lock @@ fun () ->
+  if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
 
 let ext path =
   let s =

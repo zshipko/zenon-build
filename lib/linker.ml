@@ -4,7 +4,8 @@ open Object_file
 
 type link_type = Executable | Shared | Static
 
-let link_type_of_string = function
+let link_type_of_string s =
+  match String.lowercase_ascii s with
   | "exe" | "executable" | "exec" | "bin" -> Executable
   | "shared" | "so" | "dylib" -> Shared
   | "static" | "archive" -> Static
@@ -19,18 +20,10 @@ type t = {
     flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
 }
 
-let link t mgr ~sw ~fs ~output ~objs ~flags =
+let link t mgr ~output ~objs ~flags =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
-  (* Create log file for linker output *)
-  let log_path =
-    let out_path = Eio.Path.native_exn output in
-    Eio.Path.(fs / (out_path ^ ".log"))
-  in
-  Util.mkparent log_path;
-  let log_file = Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) log_path in
-  Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
-  log_path
+  Eio.Process.run mgr cmd
 
 let c_like cc =
  fun ~flags ~objs ~output ->
@@ -73,24 +66,6 @@ let clangxx_shared =
     has_runtime = true;
     command = c_like [ "clang++"; "-shared" ];
     link_type = Shared;
-  }
-
-let cosmocc =
-  {
-    name = "cosmocc";
-    exts = String_set.empty;
-    has_runtime = false;
-    command = c_like [ "cosmocc" ];
-    link_type = Executable;
-  }
-
-let cosmocxx =
-  {
-    name = "cosmoc++";
-    exts = String_set.empty;
-    has_runtime = false;
-    command = c_like [ "cosmoc++" ];
-    link_type = Executable;
   }
 
 let ar =
@@ -164,82 +139,10 @@ let flang =
     link_type = Executable;
   }
 
-let gcc =
-  {
-    name = "gcc";
-    exts = Compiler.gcc.ext;
-    has_runtime = false;
-    command = c_like [ "gcc" ];
-    link_type = Executable;
-  }
-
-let gxx =
-  {
-    name = "g++";
-    exts = Compiler.gxx.ext;
-    has_runtime = true;
-    command = c_like [ "g++" ];
-    link_type = Executable;
-  }
-
-let gcc_shared =
-  {
-    name = "gcc";
-    exts = Compiler.gcc.ext;
-    has_runtime = false;
-    command = c_like [ "gcc"; "-shared" ];
-    link_type = Shared;
-  }
-
-let gxx_shared =
-  {
-    name = "g++";
-    exts = Compiler.gxx.ext;
-    has_runtime = true;
-    command = c_like [ "g++"; "-shared" ];
-    link_type = Shared;
-  }
-
-let gfortran =
-  {
-    name = "gfortran";
-    exts = Compiler.gfortran.ext;
-    has_runtime = false;
-    command = c_like [ "gfortran" ];
-    link_type = Executable;
-  }
-
-let gfortran_shared =
-  {
-    name = "gfortran";
-    exts = Compiler.gfortran.ext;
-    has_runtime = false;
-    command = c_like [ "gfortran"; "-shared" ];
-    link_type = Executable;
-  }
-
-let builtin =
-  [
-    clang;
-    clang_shared;
-    clangxx;
-    clangxx_shared;
-    ar;
-    ghc;
-    mlton;
-    ats2;
-    flang;
-    cosmocc;
-    cosmocxx;
-    gcc;
-    gxx;
-    gfortran;
-  ]
-
-let all = ref builtin
-
 let default =
   [ clang; clang_shared; clangxx; clangxx_shared; ar; ghc; mlton; ats2; flang ]
+
+let all = ref default
 
 let register linker =
   if
@@ -261,12 +164,6 @@ let find_by_name linkers l =
       | "ar" | "static" | "staticlib" -> Some ar
       | "ghc" | "hs" | "lhs" -> Some ghc
       | "flang-new" | "flang" | "fortran" -> Some flang
-      | "gcc" -> Some gcc
-      | "g++" -> Some gxx
-      | "g++-shared" -> Some gxx_shared
-      | "gfortran" -> Some gfortran
-      | "cosmocc" -> Some cosmocc
-      | "cosmoc++" -> Some cosmocxx
       | "sml" | "mlton" -> Some mlton
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | _ -> None)
@@ -280,8 +177,8 @@ let match_linker ~source_exts linkers =
       linkers
   in
   match matching_linkers with
-  | [] -> Ok None (* No runtime-specific linker needed *)
-  | [ linker ] -> Ok (Some linker) (* Exactly one match *)
+  | [] -> Ok None
+  | [ linker ] -> Ok (Some linker)
   | linkers ->
       Error
         (Printf.sprintf
@@ -290,20 +187,17 @@ let match_linker ~source_exts linkers =
            (String.concat ", " (List.map (fun l -> l.name) linkers)))
 
 let auto_select_linker ~sources ?(linker = clang) () =
-  match linker.name with
-  | "clang" | "gcc" -> (
-      (* Only auto-select if using generic C linker *)
-      let source_exts =
-        List.fold_left
-          (fun acc src -> String_set.add (Source_file.ext src) acc)
-          String_set.empty sources
-      in
-      (* Use all available linkers for auto-selection, including custom ones *)
-      match match_linker ~source_exts builtin with
-      | Ok (Some linker) -> linker
-      | _ -> (
-          match match_linker ~source_exts !all with
-          | Ok (Some linker) -> linker
-          | Ok None -> linker (* No specialized linker needed *)
-          | Error msg -> Fmt.failwith "%s" msg))
-  | _ -> linker
+  if linker.has_runtime then linker
+  else
+    let source_exts =
+      List.fold_left
+        (fun acc src -> String_set.add (Source_file.ext src) acc)
+        String_set.empty sources
+    in
+    match match_linker ~source_exts default with
+    | Ok (Some linker) -> linker
+    | _ -> (
+        match match_linker ~source_exts !all with
+        | Ok (Some linker) -> linker
+        | Ok None -> linker
+        | Error msg -> Fmt.failwith "%s" msg)
