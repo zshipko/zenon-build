@@ -75,10 +75,10 @@ let build t (b : Build.t) =
   let output_node = Option.map (fun x -> Output x) b.output in
   G.add_vertex t.graph build_node;
   Option.iter (G.add_vertex t.graph) output_node;
-  let ignore = Re.compile (Re.alt b.ignore) in
+  let ignore_regex = Re.compile (Re.alt b.ignore) in
   Eio.Fiber.List.iter
     (fun source_file ->
-      if Re.execp ignore (Eio.Path.native_exn source_file.path) then ()
+      if Re.execp ignore_regex (Eio.Path.native_exn source_file.path) then ()
       else
         let src_node = Src (source_file : Source_file.t) in
         G.add_vertex t.graph src_node;
