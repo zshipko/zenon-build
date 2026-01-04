@@ -2,6 +2,11 @@ let lock = Mutex.create ()
 let spinner_frames = [| "◜"; "◝"; "◞"; "◟" |]
 let spinner_idx = ref 0
 
+type log_level = [ `Quiet | `Info | `Debug ]
+
+let log_level = function 0 -> `Quiet | 1 -> `Info | _ -> `Debug
+let is_verbose = function `Quiet -> false | `Info | `Debug -> true
+
 (* Progress bar state for non-verbose mode *)
 type progress_state = { mutable current : int; total : int; is_tty : bool }
 
@@ -23,7 +28,6 @@ let log ?(verbose = true) fmt =
   Mutex.protect lock @@ fun () ->
   if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
 
-(* Clear progress bar helper *)
 let clear_progress_bar () =
   match !progress with Some p when p.is_tty -> Fmt.epr "\r\027[K%!" | _ -> ()
 
@@ -38,7 +42,6 @@ let log_clear ?(verbose = true) fmt =
 let log_error ~log_output ~filepath ~target ~command ?exn () =
   Mutex.protect lock @@ fun () ->
   clear_progress_bar ();
-  (* Print error as a single atomic block *)
   Fmt.epr "\n%s@." log_output;
   Fmt.epr "compilation failed for '%s' in target '%s'@.\tcommand: %s@." filepath
     target command;

@@ -49,8 +49,8 @@ let linker =
   Arg.(value & opt (some string) None & info [ "linker" ] ~doc ~docv:"LINKER")
 
 let verbose =
-  let doc = "Show all compiled files (verbose mode)" in
-  Arg.(value & flag & info [ "verbose"; "v" ] ~doc)
+  let doc = "Control log verbosity (-v for verbose, -vv for debug logging)" in
+  Arg.(value & flag_all & info [ "verbose"; "v" ] ~doc)
 
 let rec collect_dependencies build_map name visited =
   if String_set.mem name visited then visited
@@ -107,7 +107,7 @@ let builds_with_deps build_map names =
     String_set.empty names
 
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
-    ~pkg ~(linker : string option) ~verbose () =
+    ~pkg ~(linker : string option) ~log_level () =
   Eio_posix.run @@ fun env ->
   let ignore_patterns = List.map Util.glob_path ignore in
   let x = load_config env path in
@@ -169,7 +169,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
             })
       x
   in
-  Plan.run_all ~execute:run ~args:arg ~verbose plan
+  Plan.run_all ~execute:run ~args:arg ~log_level plan
     (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x)
 
 let clean ~path ~builds () =
@@ -201,7 +201,9 @@ let cmd_build =
   and+ run = run
   and+ verbose = verbose in
   build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run ~arg ~pkg
-    ~linker ~verbose ()
+    ~linker
+    ~log_level:(Util.log_level @@ List.length verbose)
+    ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
@@ -275,8 +277,8 @@ let version =
   let doc = "Version" in
   Arg.(value & opt string "0.0.0" & info [ "version" ] ~doc ~docv:"VERSION")
 
-let cmd_pkg =
-  Cmd.v (Cmd.info "pkg")
+let cmd_gen_pkg_config =
+  Cmd.v (Cmd.info "pkg-config")
   @@
   let+ target = target
   and+ path = path
@@ -308,7 +310,7 @@ let graph ~path ~builds ?output () =
       Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#cwd / path) dot
   | None -> print_endline dot
 
-let cmd_graph =
+let cmd_gen_graph =
   Cmd.v (Cmd.info "graph" ~doc:"Generate graphviz graph of build dependencies")
   @@
   let+ builds = targets and+ path = path and+ output = output in
@@ -334,8 +336,8 @@ let info ~path ~builds () =
       Fmt.pr "Type: %s@,"
         (match linker.link_type with
         | Linker.Executable -> "executable"
-        | Linker.Shared -> "shared library"
-        | Linker.Static -> "static library");
+        | Linker.Shared -> "shared lib"
+        | Linker.Static -> "static lib");
       Fmt.pr "Linker: %s@," linker.name;
 
       let source_files = Build.locate_source_files b in
@@ -374,7 +376,9 @@ let cmd_info =
   let+ builds = targets and+ path = path in
   info ~path ~builds ()
 
-let compile_commands ~path ~builds ?output () =
+type compile_db_format = CompileCommands | CompileFlags
+
+let compile_commands ~path ~builds ~format ?output () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in
   let builds = filter_builds x builds in
@@ -384,70 +388,122 @@ let compile_commands ~path ~builds ?output () =
     List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x
   in
 
-  let entries = ref [] in
-  List.iter
-    (fun (b : Build.t) ->
-      let source_files = Build.locate_source_files b in
-      let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
-      let flags = Flags.v ~compile:(Build.compile_flags b) () in
-      let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
-
+  match format with
+  | CompileCommands -> (
+      let entries = ref [] in
       List.iter
-        (fun (source : Source_file.t) ->
-          let ext = Source_file.ext source in
-          match Hashtbl.find_opt b.compiler_index ext with
-          | None -> ()
-          | Some compiler ->
-              let obj =
-                Object_file.of_source ~root:b.source ~build_name:b.name
-                  ~build_dir:Eio.Path.(b.build / "obj")
-                  source
-              in
-              let file_flags =
-                Hashtbl.find_opt b.compiler_flags ext
-                |> Option.value ~default:(Flags.v ())
-              in
-              let final_flags = Flags.concat b_flags file_flags in
-              let command =
-                compiler.Compiler.command ~flags:final_flags ~sources:[ source ]
-                  ~output:obj
-              in
-              let entry =
-                `O
-                  [
-                    ("directory", `String (Eio.Path.native_exn env#cwd));
-                    ("file", `String (Eio.Path.native_exn source.path));
-                    ( "command",
-                      `String
-                        (String.concat " "
-                           (List.map
-                              (fun s ->
-                                if String.contains s ' ' then Fmt.str "\"%s\"" s
-                                else s)
-                              command)) );
-                    ("output", `String (Eio.Path.native_exn obj.path));
-                  ]
-              in
-              entries := entry :: !entries)
-        source_files)
-    targets;
+        (fun (b : Build.t) ->
+          let source_files = Build.locate_source_files b in
+          let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
+          let flags = Flags.v () in
+          let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
 
-  let json = `A (List.rev !entries) in
-  let contents = Ezjsonm.value_to_string ~minify:false json in
-  match output with
-  | Some path ->
-      Eio.Path.save ~create:(`Or_truncate 0o644)
-        Eio.Path.(env#cwd / path)
-        contents
-  | None -> print_endline contents
+          List.iter
+            (fun (source : Source_file.t) ->
+              let ext = Source_file.ext source in
+              match Hashtbl.find_opt b.compiler_index ext with
+              | None -> ()
+              | Some compiler ->
+                  let obj =
+                    Object_file.of_source ~root:b.source ~build_name:b.name
+                      ~build_dir:Eio.Path.(b.build / "obj")
+                      source
+                  in
+                  let file_flags =
+                    Hashtbl.find_opt b.compiler_flags ext
+                    |> Option.value ~default:(Flags.v ())
+                  in
+                  let final_flags = Flags.concat b_flags file_flags in
+                  let command =
+                    compiler.Compiler.command ~flags:final_flags
+                      ~sources:[ source ] ~output:obj
+                  in
+                  let entry =
+                    `O
+                      [
+                        ("directory", `String (Eio.Path.native_exn env#cwd));
+                        ("file", `String (Eio.Path.native_exn source.path));
+                        ( "command",
+                          `String
+                            (String.concat " "
+                               (List.map
+                                  (fun s ->
+                                    if String.contains s ' ' then
+                                      Fmt.str "\"%s\"" s
+                                    else s)
+                                  command)) );
+                        ("output", `String (Eio.Path.native_exn obj.path));
+                      ]
+                  in
+                  entries := entry :: !entries)
+            source_files)
+        targets;
 
-let cmd_compile_commands =
-  Cmd.v
-    (Cmd.info "compile-commands"
-       ~doc:"Generate compile_commands.json for IDE/LSP integration")
+      let json = `A (List.rev !entries) in
+      let contents = Ezjsonm.value_to_string ~minify:false json in
+      match output with
+      | Some path ->
+          Eio.Path.save ~create:(`Or_truncate 0o644)
+            Eio.Path.(env#cwd / path)
+            contents
+      | None -> print_endline contents)
+  | CompileFlags -> (
+      let flag_set = ref String_set.empty in
+      List.iter
+        (fun (b : Build.t) ->
+          let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
+          let flags = Flags.v () in
+          let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
+          let source_files = Build.locate_source_files b in
+
+          List.iter
+            (fun (source : Source_file.t) ->
+              let ext = Source_file.ext source in
+              match Hashtbl.find_opt b.compiler_index ext with
+              | None -> ()
+              | Some _ ->
+                  let file_flags =
+                    Hashtbl.find_opt b.compiler_flags ext
+                    |> Option.value ~default:(Flags.v ())
+                  in
+                  let final_flags = Flags.concat b_flags file_flags in
+                  List.iter
+                    (fun flag -> flag_set := String_set.add flag !flag_set)
+                    final_flags.compile)
+            source_files)
+        targets;
+
+      let contents =
+        String_set.to_list !flag_set |> String.concat "\n" |> fun s -> s ^ "\n"
+      in
+      match output with
+      | Some path ->
+          Eio.Path.save ~create:(`Or_truncate 0o644)
+            Eio.Path.(env#cwd / path)
+            contents
+      | None -> print_string contents)
+
+let cmd_gen_compile_commands =
+  Cmd.v (Cmd.info "compile-commands" ~doc:"Generate compile_commands.json")
   @@
   let+ builds = targets and+ path = path and+ output = output in
-  compile_commands ~path ~builds ?output ()
+  compile_commands ~path ~builds ~format:CompileCommands ?output ()
+
+let cmd_gen_compile_flags =
+  Cmd.v (Cmd.info "compile-flags" ~doc:"Generate compile_flags.txt")
+  @@
+  let+ builds = targets and+ path = path and+ output = output in
+  compile_commands ~path ~builds ~format:CompileFlags ?output ()
+
+let cmd_gen =
+  Cmd.group
+    (Cmd.info "gen" ~doc:"Generate files")
+    [
+      cmd_gen_compile_commands;
+      cmd_gen_compile_flags;
+      cmd_gen_pkg_config;
+      cmd_gen_graph;
+    ]
 
 let install ~path ~builds ~prefix ~version ~uninstall () =
   Eio_posix.run @@ fun env ->
@@ -689,10 +745,8 @@ let main () =
            cmd_build;
            cmd_run;
            cmd_clean;
-           cmd_pkg;
-           cmd_graph;
            cmd_info;
-           cmd_compile_commands;
+           cmd_gen;
            cmd_install;
            cmd_tools;
          ]

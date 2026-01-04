@@ -70,7 +70,7 @@ let build t (b : Build.t) =
       Build.add_source_file b "*.c"
   in
   let source_files = Build.locate_source_files b in
-  let flags = Flags.v ~compile:(Build.compile_flags b) () in
+  let flags = Flags.v () in
   let build_node = Build b in
   let output_node = Option.map (fun x -> Output x) b.output in
   G.add_vertex t.graph build_node;
@@ -153,8 +153,9 @@ let run_script mgr ~build_dir s =
      with _ -> ());
     raise exn
 
-let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
+let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
     (b : Build.t) =
+  let verbose = Util.is_verbose log_level in
   Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
@@ -162,7 +163,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
       run_script b.env#process_mgr ~build_dir:b.build s)
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
-  let flags = Flags.v ~compile:(Build.compile_flags b) () in
+  let flags = Flags.v () in
   let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
   let link_flags = ref b_flags in
   let count = ref 0 in
@@ -209,6 +210,11 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     ^ String.concat "_" flags.compile
                   in
                   try
+                    let cmd =
+                      c.command ~sources ~flags:combined_flags ~output:obj
+                    in
+                    if log_level = `Debug then
+                      Util.log "  $ %s" (String.concat " " cmd);
                     let task =
                       Compiler.compile_obj c b.env#process_mgr ~sources
                         ~output:obj ~sw ~build_mtime:b.mtime ~verbose
@@ -258,6 +264,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+      (if log_level = `Debug then
+         let link_cmd = linker.command ~flags:!link_flags ~objs ~output in
+         Util.log "  $ %s" (String.concat " " link_cmd));
       Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags
         ~build_dir:b.build)
     b.output;
@@ -302,7 +311,7 @@ let add_dependency_edges t builds =
         build.depends_on)
     builds
 
-let run_all ?execute ?args ?(verbose = false) t builds =
+let run_all ?execute ?args ?(log_level = `Debug) t builds =
   let build_map =
     List.fold_left
       (fun acc (build : Build.t) ->
@@ -369,7 +378,7 @@ let run_all ?execute ?args ?(verbose = false) t builds =
       Eio.Fiber.List.filter_map
         (fun (build : Build.t) ->
           try
-            run_build ?execute ?execute_args:args ~verbose t build;
+            run_build ?execute ?execute_args:args ~log_level t build;
             Hashtbl.add executed build.name ();
             Some build
           with

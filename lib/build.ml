@@ -120,14 +120,6 @@ let locate_source_files t : Source_file.t list =
   |> List.map (fun path -> Source_file.v ~root:t.source path)
 
 let locate_headers t : path list = locate_files t t.headers
-
-let parse_compile_flags f =
-  Eio.Path.with_lines f @@ fun lines -> Seq.map String.trim lines |> List.of_seq
-
-let compile_flags t =
-  let f = Eio.Path.(t.source / "compile_flags.txt") in
-  if Eio.Path.is_file f then parse_compile_flags f else []
-
 let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
 
 let add_source_files t ?(reset = false) files =
