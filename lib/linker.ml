@@ -141,8 +141,7 @@ let mlton =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
         [ "mlton"; "-output"; Eio.Path.native_exn output ]
-        @ (List.map (fun x -> [ "-link-opt"; x ]) flags.Flags.link
-          |> List.flatten)
+        @ List.concat_map (fun x -> [ "-link-opt"; x ]) flags.Flags.link
         @ objs);
     link_type = Executable;
   }
@@ -151,7 +150,7 @@ let ats2 =
   {
     name = "patscc";
     exts = Compiler.ats2.ext;
-    has_runtime = false;
+    has_runtime = true;
     command = c_like [ "patscc" ];
     link_type = Executable;
   }
@@ -239,6 +238,9 @@ let builtin =
 
 let all = ref builtin
 
+let default =
+  [ clang; clang_shared; clangxx; clangxx_shared; ar; ghc; mlton; ats2; flang ]
+
 let register linker =
   if
     not
@@ -269,8 +271,7 @@ let find_by_name linkers l =
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | _ -> None)
 
-let auto_select_linker ~source_exts linkers =
-  (* Find all linkers that match the source extensions *)
+let match_linker ~source_exts linkers =
   let matching_linkers =
     List.filter
       (fun linker ->
@@ -282,9 +283,27 @@ let auto_select_linker ~source_exts linkers =
   | [] -> Ok None (* No runtime-specific linker needed *)
   | [ linker ] -> Ok (Some linker) (* Exactly one match *)
   | linkers ->
-      (* Multiple runtime linkers conflict *)
       Error
         (Printf.sprintf
            "conflicting linkers detected. You will need to explicitly specify \
             a linker. linkers detected: %s"
            (String.concat ", " (List.map (fun l -> l.name) linkers)))
+
+let auto_select_linker ~sources ?(linker = clang) () =
+  match linker.name with
+  | "clang" | "gcc" -> (
+      (* Only auto-select if using generic C linker *)
+      let source_exts =
+        List.fold_left
+          (fun acc src -> String_set.add (Source_file.ext src) acc)
+          String_set.empty sources
+      in
+      (* Use all available linkers for auto-selection, including custom ones *)
+      match match_linker ~source_exts builtin with
+      | Ok (Some linker) -> linker
+      | _ -> (
+          match match_linker ~source_exts !all with
+          | Ok (Some linker) -> linker
+          | Ok None -> linker (* No specialized linker needed *)
+          | Error msg -> Fmt.failwith "%s" msg))
+  | _ -> linker

@@ -15,11 +15,8 @@ let contents t =
   Format.pp_print_flush t.fmt ();
   Buffer.contents t.buffer
 
-let add_comment t text =
-  Fmt.pf t.fmt "# %s@." text
-
-let add_variable t name value =
-  Fmt.pf t.fmt "%s = %s@." name value
+let add_comment t text = Fmt.pf t.fmt "# %s@." text
+let add_variable t name value = Fmt.pf t.fmt "%s = %s@." name value
 
 let add_target t ~name ~deps ~commands =
   Fmt.pf t.fmt "@.%s:%a@." name
@@ -118,18 +115,19 @@ let generate_for_builds builds =
 
         (* Link target *)
         let link_flags = Flags.v ~link:!all_link_flags () in
+        let linker =
+          Linker.auto_select_linker ~sources:source_files ~linker:b.linker ()
+        in
         let link_cmd =
-          b.linker.command ~flags:link_flags ~objs:objects
+          linker.command ~flags:link_flags ~objs:objects
             ~output:Eio.Path.(b.env#fs / target_name)
         in
         let link_cmd_str =
           String.concat " "
             (List.map
-               (fun s ->
-                 if String.contains s ' ' then Printf.sprintf "\"%s\"" s else s)
+               (fun s -> if String.contains s ' ' then Filename.quote s else s)
                link_cmd)
-          ^ (if List.is_empty deps then ""
-             else " " ^ String.concat " " deps)
+          ^ if List.is_empty deps then "" else " " ^ String.concat " " deps
         in
         add_target makefile ~name:target_name ~deps:(obj_paths @ deps)
           ~commands:[ link_cmd_str ];
@@ -140,7 +138,9 @@ let generate_for_builds builds =
         List.iter2
           (fun src obj ->
             let src_path = Eio.Path.native_exn src.Source_file.path in
-            let obj_path = normalize_path (Eio.Path.native_exn obj.Object_file.path) in
+            let obj_path =
+              normalize_path (Eio.Path.native_exn obj.Object_file.path)
+            in
             let obj_dir = Filename.dirname obj_path in
             let ext = Source_file.ext src in
 
@@ -165,7 +165,9 @@ let generate_for_builds builds =
                 let final_flags =
                   Flags.concat ext_flags (Pkg_config.flags ~env:b.env b.pkgconf)
                 in
-                let compile_cmd = c.command ~flags:final_flags ~sources:[src] ~output:obj in
+                let compile_cmd =
+                  c.command ~flags:final_flags ~sources:[ src ] ~output:obj
+                in
                 let compile_cmd_str =
                   String.concat " "
                     (List.map
@@ -177,25 +179,34 @@ let generate_for_builds builds =
                 let commands =
                   [ Printf.sprintf "@mkdir -p %s" obj_dir; compile_cmd_str ]
                 in
-                add_target makefile ~name:obj_path ~deps:(src_path :: extra_deps) ~commands;
-                if not b.parallel then Hashtbl.replace prev_objs_by_ext ext obj_path
+                add_target makefile ~name:obj_path
+                  ~deps:(src_path :: extra_deps) ~commands;
+                if not b.parallel then
+                  Hashtbl.replace prev_objs_by_ext ext obj_path
             | None ->
                 (* Fallback for unknown extensions - use base build flags *)
                 let commands =
-                  [ Printf.sprintf "@mkdir -p %s" obj_dir;
+                  [
+                    Printf.sprintf "@mkdir -p %s" obj_dir;
                     Printf.sprintf "clang %s -c %s -o %s"
-                      (String.concat " " b.flags.compile) src_path obj_path ]
+                      (String.concat " " b.flags.compile)
+                      src_path obj_path;
+                  ]
                 in
-                add_target makefile ~name:obj_path ~deps:(src_path :: extra_deps) ~commands;
-                if not b.parallel then Hashtbl.replace prev_objs_by_ext ext obj_path)
+                add_target makefile ~name:obj_path
+                  ~deps:(src_path :: extra_deps) ~commands;
+                if not b.parallel then
+                  Hashtbl.replace prev_objs_by_ext ext obj_path)
           source_files objects)
       builds;
 
     (* Clean target *)
     add_target makefile ~name:"clean" ~deps:[]
       ~commands:
-        [ "rm -rf zenon-build";
-          Printf.sprintf "rm -f %s" (String.concat " " target_names) ];
+        [
+          "rm -rf zenon-build";
+          Printf.sprintf "rm -f %s" (String.concat " " target_names);
+        ];
 
     add_phony makefile ("all" :: "clean" :: target_names);
 

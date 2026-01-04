@@ -18,7 +18,7 @@
 (package
  (name zenon)
  (synopsis "Zenon: C build tool of the 21st century")
- (description "A 'smart' build tool for C-like languages")
+ (description "A build tool for compilers supporting separate compilation")
  (depends
   ocaml
   eio_posix
@@ -27,8 +27,5 @@
   ocamlgraph
   ppx_deriving_yaml
   cmdliner
-  ezjsonm
-  progress)
+  ezjsonm)
  (tags (build)))
-
-; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

@@ -49,15 +49,15 @@ let is_shared_lib (filename : string) =
      || String.ends_with ~suffix:".dylib" filename)
 
 let normalize_shared_lib_ext (filename : string) =
-  (* Convert .so to .dylib on macOS, leave others unchanged *)
   if Sys.os_type = "Unix" && String.ends_with ~suffix:".so" filename then
-    (* Check if we're on macOS by looking at uname *)
     try
       let ic = Unix.open_process_in "uname -s" in
-      let uname = input_line ic in
-      let _ = close_in ic in
-      if String.trim uname = "Darwin" then
-        Filename.remove_extension filename ^ ".dylib"
+
+      let uname =
+        Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+        String.trim @@ input_line ic
+      in
+      if uname = "Darwin" then Filename.remove_extension filename ^ ".dylib"
       else filename
     with _ -> filename
   else filename

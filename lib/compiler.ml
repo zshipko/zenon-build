@@ -10,8 +10,6 @@ type t = {
   ext : String_set.t;
 }
 
-let shell_wrapper cmd = [ "sh"; "-c"; cmd ]
-
 let c_like cc =
  fun ~flags ~sources:_ ~output ->
   cc
@@ -24,20 +22,6 @@ let clang =
     name = "clang";
     command = c_like [ "clang" ];
     ext = String_set.of_list [ "c"; "s"; "ll"; "bc" ];
-  }
-
-let cosmocc =
-  {
-    name = "cosmocc";
-    command = c_like [ "cosmocc" ];
-    ext = String_set.of_list [ "c"; "s" ];
-  }
-
-let cosmocpp =
-  {
-    name = "cosmoc++";
-    command = c_like [ "cosmoc++" ];
-    ext = String_set.of_list [ "cc"; "cpp"; "cxx" ];
   }
 
 let clangxx =
@@ -105,12 +89,15 @@ let mlton =
         let args =
           [ "mlton"; "-stop"; "o"; "-output"; out ] @ cc_opts @ [ src ]
         in
-        shell_wrapper
-          (String.concat " " args
+        [
+          "sh";
+          "-c";
+          String.concat " " args
           ^ Printf.sprintf
               " && ld -r -keep_private_externs %s.0.o %s.1.o -o %s && rm \
                %s.0.o %s.1.o"
-              out out out out out));
+              out out out out out;
+        ]);
     ext = String_set.of_list [ "sml"; "mlb" ];
   }
 
@@ -125,27 +112,6 @@ let flang =
   {
     name = "flang-new";
     command = c_like [ "flang-new" ];
-    ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
-  }
-
-let gcc =
-  {
-    name = "gcc";
-    command = c_like [ "gcc" ];
-    ext = String_set.of_list [ "c"; "s" ];
-  }
-
-let gxx =
-  {
-    name = "g++";
-    command = c_like [ "g++" ];
-    ext = String_set.of_list [ "cc"; "cpp" ];
-  }
-
-let gfortran =
-  {
-    name = "gfortran";
-    command = c_like [ "gfortran" ];
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
@@ -181,46 +147,31 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) ~fs
       let log_file =
         Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) log_path
       in
-      let process = Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file in
+      let process =
+        Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file
+      in
       (Some (process, log_path), Some log_path)
 
-let builtin =
-  [
-    clang;
-    clangxx;
-    ispc;
-    ghc;
-    mlton;
-    ats2;
-    flang;
-    cosmocc;
-    cosmocpp;
-    gcc;
-    gxx;
-    gfortran;
-  ]
-
+let builtin = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
 let all = ref builtin
+let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
 
 let register compiler =
   if not (List.exists (fun c -> c.name = compiler.name) !all) then
     all := compiler :: !all
 
-let find_by_name compilers c =
-  match List.find_opt (fun x -> x.name = c) compilers with
+let find_by_name ?compilers c =
+  match
+    List.find_opt (fun x -> x.name = c) (Option.value ~default:!all compilers)
+  with
   | Some x -> Some x
   | None -> (
-      match c with
+      match String.lowercase_ascii c with
       | "c" | "cc" | "clang" -> Some clang
       | "clang++" | "c++" | "cxx" | "cpp" -> Some clangxx
       | "ispc" -> Some ispc
       | "ghc" | "hs" | "lhs" -> Some ghc
       | "flang-new" | "flang" | "fortran" -> Some flang
-      | "gcc" -> Some gcc
-      | "g++" | "gxx" -> Some gxx
-      | "gfortran" -> Some gfortran
-      | "cosmocc" -> Some cosmocc
-      | "cosmoc++" -> Some cosmocpp
       | "sml" | "mlton" -> Some mlton
       | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
       | _ -> None)

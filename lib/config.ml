@@ -12,21 +12,7 @@ module Compiler_config = struct
   }
   [@@deriving yaml]
 
-  let clang = { name = "clang"; ext = []; command = None; link_type = "exe" }
-
-  let flang =
-    { name = "flang-new"; ext = []; command = None; link_type = "exe" }
-
-  let ispc = { name = "ispc"; ext = []; command = None; link_type = "exe" }
-
-  let clangxx =
-    { name = "clang++"; ext = []; command = None; link_type = "exe" }
-
-  let ghc = { name = "ghc"; ext = []; command = None; link_type = "exe" }
-  let mlton = { name = "mlton"; ext = []; command = None; link_type = "exe" }
-  let ats2 = { name = "patscc"; ext = []; command = None; link_type = "exe" }
-
-  let compiler compilers t =
+  let compiler ?compilers t =
     match t.command with
     | Some cmd ->
         Compiler.
@@ -44,11 +30,11 @@ module Compiler_config = struct
                   [] cmd);
           }
     | None -> (
-        match Compiler.find_by_name compilers t.name with
+        match Compiler.find_by_name ?compilers t.name with
         | None -> invalid_arg ("unknown compiler: " ^ t.name)
         | Some x -> x)
 
-  let linker linkers t =
+  let linker ?linkers t =
     match t.command with
     | Some cmd ->
         Linker.
@@ -75,7 +61,9 @@ module Compiler_config = struct
                   [] cmd);
           }
     | None -> (
-        match Linker.find_by_name linkers t.name with
+        match
+          Linker.find_by_name (Option.value ~default:!Linker.all linkers) t.name
+        with
         | None -> invalid_arg ("unknown linker: " ^ t.name)
         | Some x -> x)
 end
@@ -140,26 +128,18 @@ module Build_config = struct
 end
 
 let default_compilers =
-  [
-    Compiler_config.clang;
-    Compiler_config.clangxx;
-    Compiler_config.flang;
-    Compiler_config.ispc;
-    Compiler_config.ghc;
-    Compiler_config.mlton;
-    Compiler_config.ats2;
-  ]
+  List.map
+    (fun c ->
+      Compiler_config.
+        { name = c.Compiler.name; ext = []; command = None; link_type = "exe" })
+    Compiler.default
 
 let default_linkers =
-  [
-    Compiler_config.clang;
-    Compiler_config.clangxx;
-    Compiler_config.flang;
-    Compiler_config.{ clang with name = "ar" };
-    Compiler_config.ghc;
-    Compiler_config.mlton;
-    Compiler_config.ats2;
-  ]
+  List.map
+    (fun c ->
+      Compiler_config.
+        { name = c.Linker.name; ext = []; command = None; link_type = "exe" })
+    Linker.default
 
 module Tools = struct
   type t = {
@@ -208,12 +188,16 @@ let rec read_file_or_default path =
 
 let init ?mtime ~env path t =
   (* Register custom compilers and linkers globally *)
-  let global_compilers =
-    List.map (Compiler_config.compiler []) t.tools.compilers
+  let () =
+    List.iter
+      (fun c -> Compiler.register @@ Compiler_config.compiler ~compilers:[] c)
+      t.tools.compilers
   in
-  let global_linkers = List.map (Compiler_config.linker []) t.tools.linkers in
-  List.iter Compiler.register global_compilers;
-  List.iter Linker.register global_linkers;
+  let () =
+    List.iter
+      (fun l -> Linker.register @@ Compiler_config.linker ~linkers:[] l)
+      t.tools.linkers
+  in
 
   (* Parse .gitignore from the root path - returns Re.t list *)
   let gitignore_patterns =
@@ -242,12 +226,11 @@ let init ?mtime ~env path t =
         in
         None
       else
-        let all_compilers = !Compiler.all in
         let compilers =
-          if List.is_empty config.compilers then global_compilers
+          if List.is_empty config.compilers then !Compiler.all
           else
             List.filter_map
-              (fun name -> Compiler.find_by_name all_compilers name)
+              (fun name -> Compiler.find_by_name name)
               config.compilers
         in
         let linker_name, link_type =
@@ -269,10 +252,10 @@ let init ?mtime ~env path t =
                     if has_cxx then "clang++-shared" else "clang-shared"
                   in
                   (linker_name, "shared")
-              | _ -> (Compiler_config.clang.name, "exe"))
+              | _ -> ("clang", "exe"))
         in
         let linker =
-          Compiler_config.linker !Linker.all
+          Compiler_config.linker
             Compiler_config.
               { name = linker_name; ext = []; link_type; command = None }
         in

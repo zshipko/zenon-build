@@ -6,7 +6,7 @@ let path mgr cmd =
   try
     let result = Eio.Process.parse_out mgr Eio.Buf_read.line [ "which"; cmd ] in
     let path = String.trim result in
-    if Sys.file_exists path then Some path else None
+    Some path
   with _ -> None
 
 let is_available t cmd =

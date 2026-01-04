@@ -125,7 +125,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 (Option.map
                    (fun name ->
                      Config.Compiler_config.(
-                       linker []
+                       linker
                          { name; ext = []; command = None; link_type = "exe" }))
                    linker);
           ] )
@@ -162,7 +162,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 Option.map
                   (fun name ->
                     Config.Compiler_config.(
-                      linker []
+                      linker
                         { name; ext = []; command = None; link_type = "exe" }))
                   linker
                 |> Option.value ~default:build.Build.linker;
@@ -369,16 +369,18 @@ let info ~path ~builds () =
   in
   List.iter
     (fun (b : Build.t) ->
+      let sources = Build.locate_source_files b in
+      let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
       Fmt.pr "@[<v 2>Target: %s@," b.name;
       (match b.output with
       | Some p -> Fmt.pr "Output: %s@," (Eio.Path.native_exn p)
       | None -> Fmt.pr "Output: none@,");
       Fmt.pr "Type: %s@,"
-        (match b.linker.link_type with
+        (match linker.link_type with
         | Linker.Executable -> "executable"
         | Linker.Shared -> "shared library"
         | Linker.Static -> "static library");
-      Fmt.pr "Linker: %s@," b.linker.name;
+      Fmt.pr "Linker: %s@," linker.name;
 
       let source_files = Build.locate_source_files b in
       Fmt.pr "Source files: %d@," (List.length source_files);
@@ -549,8 +551,10 @@ let install ~path ~builds ~prefix ~version () =
       (match b.output with
       | None -> Fmt.pr "Skipping %s (no output)@." b.name
       | Some output_path -> (
+          let sources = Build.locate_source_files b in
+          let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
           let install_dir =
-            match b.linker.link_type with
+            match linker.link_type with
             | Linker.Executable -> Eio.Path.(env#fs / prefix / "bin")
             | Linker.Shared | Linker.Static ->
                 Eio.Path.(env#fs / prefix / "lib")
@@ -571,7 +575,7 @@ let install ~path ~builds ~prefix ~version () =
           Eio.Path.save ~create:(`Or_truncate 0o755) dest contents;
 
           (* Install pkg-config file for libraries *)
-          match b.linker.link_type with
+          match linker.link_type with
           | Linker.Shared | Linker.Static ->
               let lib_name = lib_name b in
               let c_flags = c_flags b in

@@ -136,7 +136,8 @@ let build t (b : Build.t) =
     source_files
 
 let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
-    ?(shared_progress = None) (b : Build.t) =
+    (b : Build.t) =
+  (* Only log target name if not using shared progress (no target line assigned) *)
   Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
@@ -163,68 +164,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
       t.graph (Build b) ([], [])
   in
   (* Auto-select linker based on source file extensions if no explicit linker was set *)
-  let linker =
-    match b.Build.linker.name with
-    | "clang" | "gcc" -> (
-        (* Only auto-select if using generic C linker *)
-        let source_exts =
-          List.fold_left
-            (fun acc src -> String_set.add (Source_file.ext src) acc)
-            String_set.empty sources
-        in
-        (* Use all available linkers for auto-selection, including custom ones *)
-        let available_linkers = !Linker.all in
-        match Linker.auto_select_linker ~source_exts available_linkers with
-        | Ok (Some linker) -> linker
-        | Ok None -> b.linker (* No specialized linker needed *)
-        | Error msg -> Fmt.failwith "%s" msg)
-    | _ -> b.linker
-  in
+  let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
   let total_files = List.length objs in
   let start_time = Unix.gettimeofday () in
-
-  (* Spinner frames using Unicode characters *)
-  let spinner = [| "◜"; "◝"; "◞"; "◟" |] in
-
-  (* Truncate filename for display *)
-  let truncate_path path max_len =
-    if String.length path <= max_len then path
-    else
-      let len = String.length path in
-      "..." ^ String.sub path (len - max_len + 3) (max_len - 3)
-  in
-
-  (* Create an animated progress bar *)
-  let report_progress current_file =
-    match shared_progress with
-    | Some
-        (total_files_all, completed_all, start_time_all, spinner_idx_all, mutex)
-      ->
-        (* Update shared progress bar *)
-        let n = Atomic.fetch_and_add completed_all 1 + 1 in
-        Eio.Mutex.use_rw mutex ~protect:false (fun () ->
-            let elapsed = Unix.gettimeofday () -. start_time_all in
-            let percent =
-              float_of_int n /. float_of_int total_files_all *. 100.0
-            in
-            let bar_width = 20 in
-            let filled =
-              int_of_float (float_of_int bar_width *. percent /. 100.0)
-            in
-            let bar =
-              let buf = Buffer.create (bar_width * 3) in
-              for i = 0 to bar_width - 1 do
-                Buffer.add_string buf (if i < filled then "█" else "░")
-              done;
-              Buffer.contents buf
-            in
-            let idx = Atomic.fetch_and_add spinner_idx_all 1 in
-            let file_display = truncate_path current_file 40 in
-            Fmt.epr "\r%s [%s] %.0f%% (%d/%d) %.1fs • %s%!"
-              spinner.(idx mod Array.length spinner)
-              bar percent n total_files_all elapsed file_display)
-    | None -> ()
-  in
 
   let visited_flags = Hashtbl.create 8 in
   let objs =
@@ -248,40 +190,39 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     ^ String.concat "_" flags.link
                     ^ String.concat "_" flags.compile
                   in
-                  (try
-                     let task, _log_path_opt =
-                       Compiler.compile_obj c b.env#process_mgr ~sources
-                         ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                         ~fs:b.env#fs combined_flags
-                     in
-                     (match task with
-                     | Some (process, log_path) -> (
-                         try
-                           Eio.Process.await_exn process;
-                           (* Delete log file on success *)
-                           try Eio.Path.unlink log_path with _ -> ()
-                         with exn ->
-                           (* On error, show the log file contents *)
-                           let log_contents =
-                             Eio.Path.load log_path |> String.trim
-                           in
-                           if String.length log_contents > 0 then
-                             Fmt.epr "\n%s\n%!" log_contents;
-                           raise exn)
-                     | None -> ());
-                     if not (Hashtbl.mem visited_flags key) then
-                       let () = Hashtbl.add visited_flags key true in
-                       link_flags := Flags.concat !link_flags flags
-                   with exn ->
-                     let cmd =
-                       c.command ~sources ~flags:combined_flags ~output:obj
-                     in
-                     Fmt.failwith
-                       "compilation failed for '%s' in target '%s'\n\
-                        \tcommand: %s\n\
-                        \tmessage: %a"
-                       filepath b.name (String.concat " " cmd) Fmt.exn exn);
-                  report_progress filepath
+                  try
+                    let task, _log_path_opt =
+                      Compiler.compile_obj c b.env#process_mgr ~sources
+                        ~output:obj ~sw ~build_mtime:b.mtime ~verbose
+                        ~fs:b.env#fs combined_flags
+                    in
+                    (match task with
+                    | Some (process, log_path) -> (
+                        try
+                          Eio.Process.await_exn process;
+                          (* Delete log file on success *)
+                          try Eio.Path.unlink log_path with _ -> ()
+                        with exn ->
+                          (* On error, show the log file contents *)
+                          let log_contents =
+                            Eio.Path.load log_path |> String.trim
+                          in
+                          if String.length log_contents > 0 then
+                            Fmt.epr "\n%s\n%!" log_contents;
+                          raise exn)
+                    | None -> ());
+                    if not (Hashtbl.mem visited_flags key) then
+                      let () = Hashtbl.add visited_flags key true in
+                      link_flags := Flags.concat !link_flags flags
+                  with exn ->
+                    let cmd =
+                      c.command ~sources ~flags:combined_flags ~output:obj
+                    in
+                    Fmt.failwith
+                      "compilation failed for '%s' in target '%s'\n\
+                       \tcommand: %s\n\
+                       \tmessage: %a"
+                      filepath b.name (String.concat " " cmd) Fmt.exn exn
                 in
                 Some obj
             | _ -> None))
@@ -290,38 +231,31 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
   (* Show completion *)
   let elapsed = Unix.gettimeofday () -. start_time in
   if total_files > 0 then
-    match shared_progress with
-    | Some (_, _, _, _, mutex) ->
-        (* Use mutex to ensure completion message doesn't interleave with progress *)
-        Eio.Mutex.use_rw mutex ~protect:false (fun () ->
-            Fmt.epr "\r\027[K%!";
-            Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed)
-    | None -> (
-        Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
+    Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
 
-        Option.iter
-          (fun output ->
-            if verbose then
-              Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
-            Eio.Switch.run @@ fun sw ->
-            let log_path =
-              Linker.link linker b.env#process_mgr ~sw ~fs:b.env#fs ~objs
-                ~output ~flags:!link_flags
-            in
-            (* Delete log file on success *)
-            try Eio.Path.unlink log_path with _ -> ())
-          b.output;
-        Option.iter
-          (fun s ->
-            if verbose then Util.log "• SCRIPT %s" s;
-            Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
-          b.after;
-        if execute then
-          match b.output with
-          | None -> Fmt.failwith "target %s has no output" b.name
-          | Some exe ->
-              Eio.Process.run b.env#process_mgr
-                (Eio.Path.native_exn exe :: execute_args))
+  Option.iter
+    (fun output ->
+      if verbose then
+        Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+      Eio.Switch.run @@ fun sw ->
+      let log_path =
+        Linker.link linker b.env#process_mgr ~sw ~fs:b.env#fs ~objs ~output
+          ~flags:!link_flags
+      in
+      (* Delete log file on success *)
+      try Eio.Path.unlink log_path with _ -> ())
+    b.output;
+  Option.iter
+    (fun s ->
+      if verbose then Util.log "• SCRIPT %s" s;
+      Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
+    b.after;
+  if execute then
+    match b.output with
+    | None -> Fmt.failwith "target %s has no output" b.name
+    | Some exe ->
+        Eio.Process.run b.env#process_mgr
+          (Eio.Path.native_exn exe :: execute_args)
 
 let run_all ?execute ?args ?(verbose = false) t builds =
   let build_map =
@@ -334,6 +268,20 @@ let run_all ?execute ?args ?(verbose = false) t builds =
       (Hashtbl.create (List.length builds))
       builds
   in
+
+  Eio.Fiber.List.iter
+    (fun build ->
+      List.iter
+        (fun dep_name ->
+          match Hashtbl.find_opt build_map dep_name with
+          | Some dep_build ->
+              (* Edge from dependency to dependent: dep_build -> build *)
+              G.add_edge t.graph (Build dep_build) (Build build)
+          | None ->
+              Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
+                dep_name)
+        build.depends_on)
+    builds;
 
   (* Check command availability before building *)
   if not (List.is_empty builds) then (
@@ -353,20 +301,6 @@ let run_all ?execute ?args ?(verbose = false) t builds =
     Command.check_commands checker (String_set.to_list !required_commands));
 
   (* Add build dependency edges to the existing graph *)
-  Eio.Fiber.List.iter
-    (fun build ->
-      List.iter
-        (fun dep_name ->
-          match Hashtbl.find_opt build_map dep_name with
-          | Some dep_build ->
-              (* Edge from dependency to dependent: dep_build -> build *)
-              G.add_edge t.graph (Build dep_build) (Build build)
-          | None ->
-              Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
-                dep_name)
-        build.depends_on)
-    builds;
-
   let ndeps = Hashtbl.create (List.length builds) in
   List.iter
     (fun (build : Build.t) ->
@@ -385,48 +319,11 @@ let run_all ?execute ?args ?(verbose = false) t builds =
 
   (* Build targets in parallel, level by level *)
   while not (List.is_empty !ready) do
-    (* Build all ready targets in parallel *)
-    (* Calculate total files for shared progress bar *)
-    let total_files =
-      List.fold_left
-        (fun acc (build : Build.t) ->
-          let sources, _ =
-            G.fold_succ_e
-              (fun edge (sources, objs) ->
-                match G.E.dst edge with
-                | Src s as v' ->
-                    let obj =
-                      Object_file.of_source ~root:build.source
-                        ~build_name:build.name
-                        ~build_dir:Eio.Path.(build.build / "obj")
-                        s
-                    in
-                    (s :: sources, (v', obj) :: objs)
-                | _ -> (sources, objs))
-              t.graph (Build build) ([], [])
-          in
-          acc + List.length sources)
-        0 !ready
-    in
-
-    (* Create shared progress bar if we have enough files *)
-    let shared_progress =
-      if total_files > 3 && not verbose then
-        Some
-          ( total_files,
-            Atomic.make 0,
-            Unix.gettimeofday (),
-            Atomic.make 0,
-            Eio.Mutex.create () )
-      else None
-    in
-
     let builds =
       Eio.Fiber.List.filter_map
         (fun (build : Build.t) ->
           try
-            run_build ?execute ?execute_args:args ~verbose ~shared_progress t
-              build;
+            run_build ?execute ?execute_args:args ~verbose t build;
             Hashtbl.add executed build.name ();
             Some build
           with Failure msg ->
@@ -435,18 +332,11 @@ let run_all ?execute ?args ?(verbose = false) t builds =
         !ready
     in
 
-    (* Clear shared progress bar *)
-    (match shared_progress with
-    | Some (_, _, _, _, mutex) ->
-        Eio.Mutex.use_rw mutex ~protect:false (fun () -> Fmt.epr "\r\027[K%!")
-    | None -> ());
-
     let count = ref 0 in
     ready :=
       List.fold_left
         (fun newly_ready (completed_build : Build.t) ->
           incr count;
-          (* For each build that depends on this completed build *)
           G.fold_succ
             (fun succ acc ->
               match succ with
