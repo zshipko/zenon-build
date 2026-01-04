@@ -20,17 +20,35 @@ type t = {
     flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
 }
 
-let link t mgr ~output ~objs ~flags =
+let link t mgr ~output ~objs ~flags ~build_dir =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
-  Eio.Process.run mgr cmd
+  let logs_dir = Eio.Path.(build_dir / "logs") in
+  Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
+  let tmp_path =
+    Eio.Path.(logs_dir / Digest.to_hex (Digest.string (String.concat " " cmd)))
+  in
+  try
+    Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
+    @@ fun log_file ->
+    Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
+    Eio.Path.unlink tmp_path
+  with exn ->
+    (try
+       let log = Eio.Path.load tmp_path in
+       Eio.Path.unlink tmp_path;
+       Util.log "Linker command failed: %s\n%s" (String.concat " " cmd) log
+     with _ -> ());
+    raise exn
 
-let c_like cc =
+let c_like ?(force_color = "-fdiagnostics-color") cc =
  fun ~flags ~objs ~output ->
   let objs =
     List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
   in
-  cc @ [ "-o"; Eio.Path.native_exn output ] @ flags.Flags.link @ objs
+  cc
+  @ [ force_color; "-o"; Eio.Path.native_exn output ]
+  @ flags.Flags.link @ objs
 
 let clang =
   {

@@ -132,13 +132,31 @@ let build t (b : Build.t) =
           output_node)
     source_files
 
+let run_script mgr ~build_dir s =
+  let cmd = [ "sh"; "-c"; s ] in
+  let logs_dir = Eio.Path.(build_dir / "logs") in
+  Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
+  let tmp_path = Eio.Path.(logs_dir / Digest.to_hex (Digest.string s)) in
+  try
+    Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
+    @@ fun log_file ->
+    Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
+    Eio.Path.unlink tmp_path
+  with exn ->
+    (try
+       let log = Eio.Path.load tmp_path in
+       Eio.Path.unlink tmp_path;
+       Util.log "Script failed: %s\n%s" s log
+     with _ -> ());
+    raise exn
+
 let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
     (b : Build.t) =
   Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
       Util.log ~verbose "• SCRIPT %s" s;
-      Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
+      run_script b.env#process_mgr ~build_dir:b.build s)
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
   let flags = Flags.v ~compile:(Build.compile_flags b) () in
@@ -189,10 +207,30 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     let task =
                       Compiler.compile_obj c b.env#process_mgr ~sources
                         ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                        combined_flags
+                        ~build_dir:b.build combined_flags
                     in
                     (match task with
-                    | Some process -> Eio.Process.await_exn process
+                    | Some (process, log_path) -> (
+                        try
+                          Eio.Process.await_exn process;
+                          Eio.Path.unlink log_path (* Delete log on success *)
+                        with exn ->
+                          let log = Eio.Path.load log_path in
+                          Eio.Path.unlink log_path;
+                          (* Delete log anyway *)
+                          let cmd =
+                            c.command ~sources ~flags:combined_flags ~output:obj
+                          in
+                          let filepath =
+                            Util.relative_to b.source obj.source.path
+                          in
+                          Util.log "%s" log;
+                          Util.log
+                            "compilation failed for '%s' in target '%s'\n\
+                             \tcommand: %s"
+                            filepath b.name (String.concat " " cmd);
+                          Util.log ~verbose "\tmessage: %a" Fmt.exn exn;
+                          failwith (b.name ^ " failed"))
                     | None -> ());
                     if not (Hashtbl.mem visited_flags key) then
                       let () = Hashtbl.add visited_flags key true in
@@ -216,12 +254,13 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
-      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
+      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags
+        ~build_dir:b.build)
     b.output;
   Option.iter
     (fun s ->
       Util.log ~verbose "• SCRIPT %s" s;
-      Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
+      run_script b.env#process_mgr ~build_dir:b.build s)
     b.after;
   Util.log "✓ %s (%fsec) " b.name (Unix.gettimeofday () -. start);
   if execute then

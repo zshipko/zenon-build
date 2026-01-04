@@ -10,10 +10,10 @@ type t = {
   ext : String_set.t;
 }
 
-let c_like cc =
+let c_like ?(force_color = "-fcolor-diagnostics") cc =
  fun ~flags ~sources:_ ~output ->
   cc
-  @ [ "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
+  @ [ force_color; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
   @ flags.Flags.compile
   @ [ Eio.Path.native_exn output.source.path ]
 
@@ -38,6 +38,7 @@ let ispc =
       (fun ~flags ~sources:_ ~output ->
         [
           "ispc";
+          "--colored-output";
           "--emit-obj";
           "-o";
           Eio.Path.native_exn output.Object_file.path;
@@ -67,7 +68,12 @@ let ghc =
           | Some (parent, _) -> [ "-hidir"; Eio.Path.native_exn parent ]
         in
         [
-          "ghc"; "-v0"; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path;
+          "ghc";
+          "-fdiagnostics-color=always";
+          "-v0";
+          "-c";
+          "-o";
+          Eio.Path.native_exn output.Object_file.path;
         ]
         @ hidir @ include_paths @ flags.Flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);
@@ -115,8 +121,8 @@ let flang =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
-    =
+let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false)
+    ~build_dir flags =
   let st =
     try
       Option.some
@@ -136,8 +142,18 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
         (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
-      let process = Eio.Process.spawn mgr cmd ~sw in
-      Some process
+      let logs_dir = Eio.Path.(build_dir / "logs") in
+      Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
+      let tmp_path =
+        Eio.Path.(
+          logs_dir / Digest.to_hex (Digest.string (String.concat " " cmd)))
+      in
+      let process =
+        Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
+        @@ fun log_file ->
+        Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file
+      in
+      Some (process, tmp_path)
 
 let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
 let all = ref default
