@@ -126,12 +126,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                    (fun name ->
                      Config.Compiler_config.(
                        linker []
-                         {
-                           name;
-                           ext = [];
-                           command = None;
-                           link_type = Linker.Executable;
-                         }))
+                         { name; ext = []; command = None; link_type = "exe" }))
                    linker);
           ] )
     | x -> (builds, x)
@@ -168,12 +163,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                   (fun name ->
                     Config.Compiler_config.(
                       linker []
-                        {
-                          name;
-                          ext = [];
-                          command = None;
-                          link_type = Linker.Executable;
-                        }))
+                        { name; ext = []; command = None; link_type = "exe" }))
                   linker
                 |> Option.value ~default:build.Build.linker;
             })
@@ -637,12 +627,10 @@ let cmd_install =
 
 let list_tools ~path () =
   Eio_posix.run @@ fun env ->
-  (* Load config to get custom compilers/linkers *)
-  let config =
-    match Config.read_file_or_default Eio.Path.(env#fs / path) with
-    | Ok (cfg, _) -> cfg
-    | Error _ -> Config.empty
-  in
+  (* Load config to register custom compilers/linkers *)
+  (match Config.load ~env Eio.Path.(env#fs / path) with
+  | Ok _ -> ()
+  | Error (`Msg err) -> Fmt.epr "Warning: Failed to load config: %s@." err);
 
   (* Default compilers/linkers enabled by default *)
   let default_compiler_names =
@@ -654,24 +642,7 @@ let list_tools ~path () =
     |> String_set.of_list
   in
 
-  (* Get custom compilers from config *)
-  let custom_compilers =
-    List.map (Config.Compiler_config.compiler []) config.tools.compilers
-  in
-  let custom_compiler_names =
-    List.map (fun (c : Compiler.t) -> c.name) custom_compilers
-    |> String_set.of_list
-  in
-
-  (* Combine all compilers, avoiding duplicates *)
-  let all_compilers_combined =
-    custom_compilers
-    @ List.filter
-        (fun c -> not (String_set.mem c.Compiler.name custom_compiler_names))
-        Compiler.all
-  in
-
-  (* Display compilers *)
+  (* Display compilers (includes custom ones registered from config) *)
   Fmt.pr "@[<v>Compilers:@,";
   List.iter
     (fun (c : Compiler.t) ->
@@ -684,25 +655,9 @@ let list_tools ~path () =
       | None ->
           let exts = String_set.to_list c.ext |> String.concat ", " in
           Fmt.pr "  \u{2717} %s - %s%s@," c.name exts marks)
-    all_compilers_combined;
+    !Compiler.all;
 
-  (* Get custom linkers from config *)
-  let custom_linkers =
-    List.map (Config.Compiler_config.linker []) config.tools.linkers
-  in
-  let custom_linker_names =
-    List.map (fun (l : Linker.t) -> l.name) custom_linkers |> String_set.of_list
-  in
-
-  (* Combine all linkers, avoiding duplicates *)
-  let all_linkers_combined =
-    custom_linkers
-    @ List.filter
-        (fun l -> not (String_set.mem l.Linker.name custom_linker_names))
-        Linker.all
-  in
-
-  (* Display linkers *)
+  (* Display linkers (includes custom ones registered from config) *)
   Fmt.pr "@,Linkers:@,";
   List.iter
     (fun (l : Linker.t) ->
@@ -718,7 +673,7 @@ let list_tools ~path () =
       | Some path ->
           Fmt.pr "  \u{2713} %s (%s) [%s]%s@," l.name path link_type marks
       | None -> Fmt.pr "  \u{2717} %s [%s]%s@," l.name link_type marks)
-    all_linkers_combined;
+    !Linker.all;
   Fmt.pr "@]"
 
 let cmd_tools =

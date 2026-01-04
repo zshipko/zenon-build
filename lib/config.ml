@@ -8,40 +8,23 @@ module Compiler_config = struct
     name : string;
     ext : string list; [@default []]
     command : string list option; [@default None]
-    link_type : Linker.link_type; [@key "link-type"] [@default Linker.Executable]
+    link_type : string; [@key "link-type"] [@default "exe"]
   }
   [@@deriving yaml]
 
-  let clang =
-    { name = "clang"; ext = []; command = None; link_type = Linker.Executable }
+  let clang = { name = "clang"; ext = []; command = None; link_type = "exe" }
 
   let flang =
-    {
-      name = "flang-new";
-      ext = [];
-      command = None;
-      link_type = Linker.Executable;
-    }
+    { name = "flang-new"; ext = []; command = None; link_type = "exe" }
 
-  let ispc =
-    { name = "ispc"; ext = []; command = None; link_type = Linker.Executable }
+  let ispc = { name = "ispc"; ext = []; command = None; link_type = "exe" }
 
   let clangxx =
-    {
-      name = "clang++";
-      ext = [];
-      command = None;
-      link_type = Linker.Executable;
-    }
+    { name = "clang++"; ext = []; command = None; link_type = "exe" }
 
-  let ghc =
-    { name = "ghc"; ext = []; command = None; link_type = Linker.Executable }
-
-  let mlton =
-    { name = "mlton"; ext = []; command = None; link_type = Linker.Executable }
-
-  let ats2 =
-    { name = "patscc"; ext = []; command = None; link_type = Linker.Executable }
+  let ghc = { name = "ghc"; ext = []; command = None; link_type = "exe" }
+  let mlton = { name = "mlton"; ext = []; command = None; link_type = "exe" }
+  let ats2 = { name = "patscc"; ext = []; command = None; link_type = "exe" }
 
   let compiler compilers t =
     match t.command with
@@ -71,7 +54,7 @@ module Compiler_config = struct
         Linker.
           {
             name = t.name;
-            link_type = t.link_type;
+            link_type = Linker.link_type_of_string t.link_type;
             exts = String_set.of_list t.ext;
             has_runtime = false;
             command =
@@ -224,6 +207,14 @@ let rec read_file_or_default path =
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
+  (* Register custom compilers and linkers globally *)
+  let global_compilers =
+    List.map (Compiler_config.compiler []) t.tools.compilers
+  in
+  let global_linkers = List.map (Compiler_config.linker []) t.tools.linkers in
+  List.iter Compiler.register global_compilers;
+  List.iter Linker.register global_linkers;
+
   (* Parse .gitignore from the root path - returns Re.t list *)
   let gitignore_patterns =
     Util.parse_gitignore Eio.Path.(path / ".gitignore")
@@ -251,10 +242,7 @@ let init ?mtime ~env path t =
         in
         None
       else
-        let global_compilers =
-          List.map (Compiler_config.compiler []) t.tools.compilers
-        in
-        let all_compilers = global_compilers @ Compiler.all in
+        let all_compilers = !Compiler.all in
         let compilers =
           if List.is_empty config.compilers then global_compilers
           else
@@ -262,14 +250,14 @@ let init ?mtime ~env path t =
               (fun name -> Compiler.find_by_name all_compilers name)
               config.compilers
         in
-        let linker_name =
+        let linker_name, link_type =
           match config.Build_config.linker with
-          | Some linker -> linker
+          | Some linker -> (linker, "exe") (* User-specified linker *)
           | None -> (
               match config.target with
               | Some target when Util.is_static_lib (Filename.basename target)
                 ->
-                  "ar"
+                  ("ar", "static")
               | Some target when Util.is_shared_lib (Filename.basename target)
                 ->
                   let has_cxx =
@@ -277,19 +265,16 @@ let init ?mtime ~env path t =
                       (fun name -> name = "clang++" || name = "g++")
                       config.compilers
                   in
-                  if has_cxx then "clang++-shared" else "clang-shared"
-              | _ -> Compiler_config.clang.name)
+                  let linker_name =
+                    if has_cxx then "clang++-shared" else "clang-shared"
+                  in
+                  (linker_name, "shared")
+              | _ -> (Compiler_config.clang.name, "exe"))
         in
         let linker =
-          Compiler_config.linker
-            (List.map (Compiler_config.linker []) t.tools.linkers)
+          Compiler_config.linker !Linker.all
             Compiler_config.
-              {
-                name = linker_name;
-                ext = [];
-                link_type = Linker.Executable;
-                command = None;
-              }
+              { name = linker_name; ext = []; link_type; command = None }
         in
         let compiler_flags =
           List.to_seq (t.flags @ config.flags)

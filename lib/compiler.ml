@@ -149,8 +149,8 @@ let gfortran =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
-    =
+let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) ~fs
+    flags =
   let st =
     try
       Option.some
@@ -164,7 +164,7 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
         Util.log "• CACHE %s -> %s"
           (Eio.Path.native_exn output.source.path)
           (Eio.Path.native_exn output.Object_file.path);
-      None
+      (None, None)
   | _ ->
       if verbose then
         Util.log "• COMPILE(%s) %s -> %s" t.name
@@ -172,9 +172,19 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false) flags
           (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
-      Some (Eio.Process.spawn mgr cmd ~sw)
+      (* Create log file for compiler output *)
+      let log_path =
+        let obj_path = Eio.Path.native_exn output.Object_file.path in
+        Eio.Path.(fs / (obj_path ^ ".log"))
+      in
+      Util.mkparent log_path;
+      let log_file =
+        Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) log_path
+      in
+      let process = Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file in
+      (Some (process, log_path), Some log_path)
 
-let all =
+let builtin =
   [
     clang;
     clangxx;
@@ -189,6 +199,12 @@ let all =
     gxx;
     gfortran;
   ]
+
+let all = ref builtin
+
+let register compiler =
+  if not (List.exists (fun c -> c.name = compiler.name) !all) then
+    all := compiler :: !all
 
 let find_by_name compilers c =
   match List.find_opt (fun x -> x.name = c) compilers with

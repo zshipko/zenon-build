@@ -2,11 +2,13 @@ open Types
 open Source_file
 open Object_file
 
-type link_type =
-  | Executable [@name "exe"]
-  | Shared [@name "shared"]
-  | Static [@name "static"]
-[@@deriving yaml]
+type link_type = Executable | Shared | Static
+
+let link_type_of_string = function
+  | "exe" | "executable" | "exec" | "bin" -> Executable
+  | "shared" | "so" | "dylib" -> Shared
+  | "static" | "archive" -> Static
+  | other -> invalid_arg ("invalid link type: " ^ other)
 
 type t = {
   name : string;
@@ -17,10 +19,18 @@ type t = {
     flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
 }
 
-let link t mgr ~output ~objs ~flags =
+let link t mgr ~sw ~fs ~output ~objs ~flags =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
-  Eio.Process.run mgr cmd
+  (* Create log file for linker output *)
+  let log_path =
+    let out_path = Eio.Path.native_exn output in
+    Eio.Path.(fs / (out_path ^ ".log"))
+  in
+  Util.mkparent log_path;
+  let log_file = Eio.Path.open_out ~sw ~create:(`Or_truncate 0o644) log_path in
+  Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
+  log_path
 
 let c_like cc =
  fun ~flags ~objs ~output ->
@@ -209,7 +219,7 @@ let gfortran_shared =
     link_type = Executable;
   }
 
-let all =
+let builtin =
   [
     clang;
     clang_shared;
@@ -226,6 +236,16 @@ let all =
     gxx;
     gfortran;
   ]
+
+let all = ref builtin
+
+let register linker =
+  if
+    not
+      (List.exists
+         (fun l -> l.name = linker.name && l.link_type = linker.link_type)
+         !all)
+  then all := linker :: !all
 
 let find_by_name linkers l =
   match List.find_opt (fun x -> x.name = l) linkers with

@@ -136,7 +136,7 @@ let build t (b : Build.t) =
     source_files
 
 let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
-    (b : Build.t) =
+    ?(shared_progress = None) (b : Build.t) =
   Util.log "◎ %s" b.name;
   Option.iter
     (fun s ->
@@ -172,11 +172,8 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
             (fun acc src -> String_set.add (Source_file.ext src) acc)
             String_set.empty sources
         in
-        let available_linkers =
-          [
-            Linker.ghc; Linker.mlton; Linker.ats2; Linker.flang; Linker.gfortran;
-          ]
-        in
+        (* Use all available linkers for auto-selection, including custom ones *)
+        let available_linkers = !Linker.all in
         match Linker.auto_select_linker ~source_exts available_linkers with
         | Ok (Some linker) -> linker
         | Ok None -> b.linker (* No specialized linker needed *)
@@ -184,13 +181,10 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
     | _ -> b.linker
   in
   let total_files = List.length objs in
-  let completed = Atomic.make 0 in
-  let use_progress = total_files > 3 && not verbose in
   let start_time = Unix.gettimeofday () in
 
   (* Spinner frames using Unicode characters *)
   let spinner = [| "◜"; "◝"; "◞"; "◟" |] in
-  let spinner_idx = ref 0 in
 
   (* Truncate filename for display *)
   let truncate_path path max_len =
@@ -202,23 +196,34 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
 
   (* Create an animated progress bar *)
   let report_progress current_file =
-    let n = Atomic.fetch_and_add completed 1 + 1 in
-    if use_progress then (
-      let elapsed = Unix.gettimeofday () -. start_time in
-      let percent = float_of_int n /. float_of_int total_files *. 100.0 in
-      let bar_width = 20 in
-      let filled = int_of_float (float_of_int bar_width *. percent /. 100.0) in
-      let bar =
-        let buf = Buffer.create (bar_width * 3) in
-        for i = 0 to bar_width - 1 do
-          Buffer.add_string buf (if i < filled then "█" else "░")
-        done;
-        Buffer.contents buf
-      in
-      spinner_idx := (!spinner_idx + 1) mod Array.length spinner;
-      let file_display = truncate_path current_file 50 in
-      Fmt.epr "\r%s [%s] %.0f%% (%d/%d) %.1fs • %s%!" spinner.(!spinner_idx) bar
-        percent n total_files elapsed file_display)
+    match shared_progress with
+    | Some
+        (total_files_all, completed_all, start_time_all, spinner_idx_all, mutex)
+      ->
+        (* Update shared progress bar *)
+        let n = Atomic.fetch_and_add completed_all 1 + 1 in
+        Eio.Mutex.use_rw mutex ~protect:false (fun () ->
+            let elapsed = Unix.gettimeofday () -. start_time_all in
+            let percent =
+              float_of_int n /. float_of_int total_files_all *. 100.0
+            in
+            let bar_width = 20 in
+            let filled =
+              int_of_float (float_of_int bar_width *. percent /. 100.0)
+            in
+            let bar =
+              let buf = Buffer.create (bar_width * 3) in
+              for i = 0 to bar_width - 1 do
+                Buffer.add_string buf (if i < filled then "█" else "░")
+              done;
+              Buffer.contents buf
+            in
+            let idx = Atomic.fetch_and_add spinner_idx_all 1 in
+            let file_display = truncate_path current_file 40 in
+            Fmt.epr "\r%s [%s] %.0f%% (%d/%d) %.1fs • %s%!"
+              spinner.(idx mod Array.length spinner)
+              bar percent n total_files_all elapsed file_display)
+    | None -> ()
   in
 
   let visited_flags = Hashtbl.create 8 in
@@ -244,12 +249,26 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                     ^ String.concat "_" flags.compile
                   in
                   (try
-                     let task =
+                     let task, _log_path_opt =
                        Compiler.compile_obj c b.env#process_mgr ~sources
                          ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                         combined_flags
+                         ~fs:b.env#fs combined_flags
                      in
-                     Option.iter (fun task -> Eio.Process.await_exn task) task;
+                     (match task with
+                     | Some (process, log_path) -> (
+                         try
+                           Eio.Process.await_exn process;
+                           (* Delete log file on success *)
+                           try Eio.Path.unlink log_path with _ -> ()
+                         with exn ->
+                           (* On error, show the log file contents *)
+                           let log_contents =
+                             Eio.Path.load log_path |> String.trim
+                           in
+                           if String.length log_contents > 0 then
+                             Fmt.epr "\n%s\n%!" log_contents;
+                           raise exn)
+                     | None -> ());
                      if not (Hashtbl.mem visited_flags key) then
                        let () = Hashtbl.add visited_flags key true in
                        link_flags := Flags.concat !link_flags flags
@@ -268,31 +287,41 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
             | _ -> None))
       objs
   in
-  (* Clear progress line and show completion *)
+  (* Show completion *)
   let elapsed = Unix.gettimeofday () -. start_time in
-  if use_progress then
-    (* Clear the line first with spaces, then write the completion message *)
-    Fmt.epr "\r%s\r" (String.make 100 ' ');
   if total_files > 0 then
-    Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
+    match shared_progress with
+    | Some (_, _, _, _, mutex) ->
+        (* Use mutex to ensure completion message doesn't interleave with progress *)
+        Eio.Mutex.use_rw mutex ~protect:false (fun () ->
+            Fmt.epr "\r\027[K%!";
+            Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed)
+    | None -> (
+        Util.log "✓ %s • %d files in %.1fs" b.name total_files elapsed;
 
-  Option.iter
-    (fun output ->
-      if verbose then
-        Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
-      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags)
-    b.output;
-  Option.iter
-    (fun s ->
-      if verbose then Util.log "• SCRIPT %s" s;
-      Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
-    b.after;
-  if execute then
-    match b.output with
-    | None -> Fmt.failwith "target %s has no output" b.name
-    | Some exe ->
-        Eio.Process.run b.env#process_mgr
-          (Eio.Path.native_exn exe :: execute_args)
+        Option.iter
+          (fun output ->
+            if verbose then
+              Util.log "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+            Eio.Switch.run @@ fun sw ->
+            let log_path =
+              Linker.link linker b.env#process_mgr ~sw ~fs:b.env#fs ~objs
+                ~output ~flags:!link_flags
+            in
+            (* Delete log file on success *)
+            try Eio.Path.unlink log_path with _ -> ())
+          b.output;
+        Option.iter
+          (fun s ->
+            if verbose then Util.log "• SCRIPT %s" s;
+            Eio.Process.run b.env#process_mgr [ "sh"; "-c"; s ])
+          b.after;
+        if execute then
+          match b.output with
+          | None -> Fmt.failwith "target %s has no output" b.name
+          | Some exe ->
+              Eio.Process.run b.env#process_mgr
+                (Eio.Path.native_exn exe :: execute_args))
 
 let run_all ?execute ?args ?(verbose = false) t builds =
   let build_map =
@@ -357,18 +386,60 @@ let run_all ?execute ?args ?(verbose = false) t builds =
   (* Build targets in parallel, level by level *)
   while not (List.is_empty !ready) do
     (* Build all ready targets in parallel *)
+    (* Calculate total files for shared progress bar *)
+    let total_files =
+      List.fold_left
+        (fun acc (build : Build.t) ->
+          let sources, _ =
+            G.fold_succ_e
+              (fun edge (sources, objs) ->
+                match G.E.dst edge with
+                | Src s as v' ->
+                    let obj =
+                      Object_file.of_source ~root:build.source
+                        ~build_name:build.name
+                        ~build_dir:Eio.Path.(build.build / "obj")
+                        s
+                    in
+                    (s :: sources, (v', obj) :: objs)
+                | _ -> (sources, objs))
+              t.graph (Build build) ([], [])
+          in
+          acc + List.length sources)
+        0 !ready
+    in
+
+    (* Create shared progress bar if we have enough files *)
+    let shared_progress =
+      if total_files > 3 && not verbose then
+        Some
+          ( total_files,
+            Atomic.make 0,
+            Unix.gettimeofday (),
+            Atomic.make 0,
+            Eio.Mutex.create () )
+      else None
+    in
+
     let builds =
       Eio.Fiber.List.filter_map
         (fun (build : Build.t) ->
           try
-            run_build ?execute ?execute_args:args ~verbose t build;
+            run_build ?execute ?execute_args:args ~verbose ~shared_progress t
+              build;
             Hashtbl.add executed build.name ();
             Some build
           with Failure msg ->
-            Util.log "❌ ERROR %s" msg;
+            Util.log "❌ %s\n%s" build.name msg;
             None)
         !ready
     in
+
+    (* Clear shared progress bar *)
+    (match shared_progress with
+    | Some (_, _, _, _, mutex) ->
+        Eio.Mutex.use_rw mutex ~protect:false (fun () -> Fmt.epr "\r\027[K%!")
+    | None -> ());
 
     let count = ref 0 in
     ready :=
