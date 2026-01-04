@@ -285,30 +285,6 @@ let cmd_pkg =
   and+ output = output in
   pkg ~path ~target ~prefix ~version ?output ()
 
-let makefile ~path ~targets ?output () =
-  Eio_posix.run @@ fun env ->
-  let x = load_config env path in
-  let targets = filter_builds x targets in
-  let build_map = make_build_map x in
-  let builds_with_deps_set = builds_with_deps build_map targets in
-  let builds =
-    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x
-  in
-
-  let contents = Makefile.generate_for_builds builds in
-  match output with
-  | Some path ->
-      Eio.Path.save ~create:(`Or_truncate 0o644)
-        Eio.Path.(env#fs / path)
-        contents
-  | None -> print_endline contents
-
-let cmd_make =
-  Cmd.v (Cmd.info "make" ~doc:"Generate Makefile for build targets")
-  @@
-  let+ targets = targets and+ path = path and+ output = output in
-  makefile ~path ~targets ?output ()
-
 let graph ~path ~builds ?output () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in
@@ -325,6 +301,7 @@ let graph ~path ~builds ?output () =
         then Plan.build plan build)
       x
   in
+  Plan.add_dependency_edges plan x;
   let dot = Print.to_dot plan in
   match output with
   | Some path ->
@@ -695,7 +672,6 @@ let main () =
            cmd_run;
            cmd_clean;
            cmd_pkg;
-           cmd_make;
            cmd_graph;
            cmd_info;
            cmd_compile_commands;

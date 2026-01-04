@@ -23,6 +23,7 @@ type cmd =
   | Script of string * path option
   | Compiler of Compiler.t * Flags.t option
   | Linker of Linker.t
+  | Dependency
 
 let cmd_id = function
   | Script (b, output) ->
@@ -36,6 +37,7 @@ let cmd_id = function
       ^ String.concat "_" f.compile
   | Compiler (c, None) -> "compiler:" ^ c.name
   | Linker link -> "linker:" ^ link.name
+  | Dependency -> "dependency"
 
 module Make = Graph.Imperative.Digraph.ConcreteLabeled (struct
   type t = value
@@ -270,6 +272,32 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
         Eio.Process.run b.env#process_mgr
           (Eio.Path.native_exn exe :: execute_args)
 
+let add_dependency_edges t builds =
+  let build_map =
+    List.fold_left
+      (fun acc (build : Build.t) ->
+        if Hashtbl.mem acc build.name then
+          Fmt.failwith "duplicate build name: %s" build.name;
+        Hashtbl.add acc build.name build;
+        acc)
+      (Hashtbl.create (List.length builds))
+      builds
+  in
+  List.iter
+    (fun build ->
+      List.iter
+        (fun dep_name ->
+          match Hashtbl.find_opt build_map dep_name with
+          | Some dep_build ->
+              (* Edge from dependency to dependent: dep_build -> build *)
+              G.add_edge_e t.graph
+              @@ G.E.create (Build dep_build) (Some Dependency) (Build build)
+          | None ->
+              Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
+                dep_name)
+        build.depends_on)
+    builds
+
 let run_all ?execute ?args ?(verbose = false) t builds =
   let build_map =
     List.fold_left
@@ -289,7 +317,8 @@ let run_all ?execute ?args ?(verbose = false) t builds =
           match Hashtbl.find_opt build_map dep_name with
           | Some dep_build ->
               (* Edge from dependency to dependent: dep_build -> build *)
-              G.add_edge t.graph (Build dep_build) (Build build)
+              G.add_edge_e t.graph
+              @@ G.E.create (Build dep_build) (Some Dependency) (Build build)
           | None ->
               Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
                 dep_name)

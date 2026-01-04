@@ -9,9 +9,13 @@ module Dot = Graph.Graphviz.Dot (struct
 
   let vertex_attributes v =
     match v with
-    | Build b -> [ `Shape `Box; `Label b.name; `Style `Filled; `Fillcolor 0xE8F4F8 ]
+    | Build b ->
+        [ `Shape `Box; `Label b.name; `Style `Filled; `Fillcolor 0xE8F4F8 ]
     | Src s ->
-        [ `Shape `Ellipse; `Label (Eio.Path.native_exn s.path |> Filename.basename) ]
+        [
+          `Shape `Ellipse;
+          `Label (Eio.Path.native_exn s.path |> Filename.basename);
+        ]
     | Obj o ->
         [
           `Shape `Note;
@@ -42,6 +46,7 @@ module Dot = Graph.Graphviz.Dot (struct
     | Some (Compiler (c, _)) ->
         [ `Label c.name; `Color 0x3498DB; `Arrowhead `Normal ]
     | Some (Linker l) -> [ `Label l.name; `Color 0x27AE60; `Penwidth 2.0 ]
+    | Some Dependency -> [ `Color 0x000000; `Style `Solid ]
     | None -> [ `Color 0xBDC3C7; `Style `Dotted ]
 end)
 
