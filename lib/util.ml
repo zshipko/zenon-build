@@ -23,6 +23,27 @@ let log ?(verbose = true) fmt =
   Mutex.protect lock @@ fun () ->
   if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
 
+(* Clear progress bar helper *)
+let clear_progress_bar () =
+  match !progress with Some p when p.is_tty -> Fmt.epr "\r\027[K%!" | _ -> ()
+
+(* Log with progress bar cleared first - use for errors/important messages *)
+let log_clear ?(verbose = true) fmt =
+  Mutex.protect lock @@ fun () ->
+  if verbose then (
+    clear_progress_bar ();
+    Fmt.epr (fmt ^^ "@."))
+  else Fmt.kstr ignore fmt
+
+let log_error ~log_output ~filepath ~target ~command ?exn () =
+  Mutex.protect lock @@ fun () ->
+  clear_progress_bar ();
+  (* Print error as a single atomic block *)
+  Fmt.epr "\n%s@." log_output;
+  Fmt.epr "compilation failed for '%s' in target '%s'@.\tcommand: %s@." filepath
+    target command;
+  match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ()
+
 let log_spinner ?(verbose = true) fmt =
   if verbose then
     (* Verbose mode: detailed logging with bullets *)
@@ -40,17 +61,17 @@ let log_spinner ?(verbose = true) fmt =
             in
             incr spinner_idx;
             let percent =
-              if p.total > 0 then (p.current * 100) / p.total else 0
+              if p.total > 0 then p.current * 100 / p.total else 0
             in
             let bar_width = 20 in
-            let filled = (bar_width * percent) / 100 in
+            let filled = bar_width * percent / 100 in
             let bar =
               String.concat ""
                 (List.init bar_width (fun i -> if i < filled then "█" else "░"))
             in
-            (* Print with carriage return to overwrite the line *)
-            Fmt.epr "\r%s [%s] %d%% (%d/%d) %s%!" frame bar percent p.current
-              p.total msg
+            (* Clear line and print progress - \r moves to start, \027[K clears to end *)
+            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d) %s%!" frame bar percent
+              p.current p.total msg
         | None -> ())
       fmt
 

@@ -37,7 +37,7 @@ let link t mgr ~output ~objs ~flags ~build_dir =
     (try
        let log = Eio.Path.load tmp_path in
        Eio.Path.unlink tmp_path;
-       Util.log "Linker command failed: %s\n%s" (String.concat " " cmd) log
+       Util.log_clear "❌ linker failed: %s\n%s" (String.concat " " cmd) log
      with _ -> ());
     raise exn
 

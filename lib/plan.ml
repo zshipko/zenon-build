@@ -7,6 +7,9 @@ module Util = Util
 module Build = Build
 module Pkg_config = Pkg_config
 
+(* Exception for build failures that have already been logged *)
+exception Build_failed of string
+
 type value =
   | Build of Build.t
   | Src of Source_file.t
@@ -55,8 +58,6 @@ module G = Make (struct
   let compare a b =
     Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
 end)
-
-let error_msg name msg = Printf.sprintf "❌ %s\n%s" name msg
 
 type t = { graph : G.t }
 
@@ -148,7 +149,7 @@ let run_script mgr ~build_dir s =
     (try
        let log = Eio.Path.load tmp_path in
        Eio.Path.unlink tmp_path;
-       Util.log "Script failed: %s\n%s" s log
+       Util.log_clear "❌ script failed %s\n%s" s log
      with _ -> ());
     raise exn
 
@@ -185,7 +186,6 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
 
   let start = Unix.gettimeofday () in
 
-  (* Initialize progress bar for non-verbose mode *)
   if not verbose then Util.init_progress (List.length objs);
 
   Eio.Switch.run @@ fun sw ->
@@ -229,28 +229,27 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(verbose = false)
                           let filepath =
                             Util.relative_to b.source obj.source.path
                           in
-                          Util.log "%s" log;
-                          Util.log
-                            "compilation failed for '%s' in target '%s'\n\
-                             \tcommand: %s"
-                            filepath b.name (String.concat " " cmd);
-                          Util.log ~verbose "\tmessage: %a" Fmt.exn exn;
-                          failwith (b.name ^ " failed"))
+                          Util.log_error ~log_output:log ~filepath
+                            ~target:b.name ~command:(String.concat " " cmd) ~exn
+                            ();
+                          raise (Build_failed b.name))
                     | None -> ());
                     if not (Hashtbl.mem visited_flags key) then
                       let () = Hashtbl.add visited_flags key true in
                       link_flags := Flags.concat !link_flags flags
-                  with exn ->
-                    let cmd =
-                      c.command ~sources ~flags:combined_flags ~output:obj
-                    in
-                    let filepath = Util.relative_to b.source obj.source.path in
-                    Util.log
-                      "compilation failed for '%s' in target '%s'\n\
-                       \tcommand: %s\n"
-                      filepath b.name (String.concat " " cmd);
-                    Util.log ~verbose "\tmessage: %a" Fmt.exn exn;
-                    failwith (b.name ^ " failed")
+                  with
+                  | Build_failed _ as e -> raise e
+                  | Eio.Cancel.Cancelled _ as e -> raise e
+                  | exn ->
+                      let cmd =
+                        c.command ~sources ~flags:combined_flags ~output:obj
+                      in
+                      let filepath =
+                        Util.relative_to b.source obj.source.path
+                      in
+                      Util.log_error ~log_output:"" ~filepath ~target:b.name
+                        ~command:(String.concat " " cmd) ~exn ();
+                      raise (Build_failed b.name)
                 in
                 Some obj
             | _ -> None))
@@ -373,9 +372,14 @@ let run_all ?execute ?args ?(verbose = false) t builds =
             run_build ?execute ?execute_args:args ~verbose t build;
             Hashtbl.add executed build.name ();
             Some build
-          with Failure msg ->
-            Util.log "❌ %s\n%s" build.name msg;
-            None)
+          with
+          | Build_failed _ ->
+              (* Error already logged *)
+              Util.log_clear "❌ %s" build.name;
+              None
+          | Failure msg ->
+              Util.log_clear "❌ %s\n%s" build.name msg;
+              None)
         !ready
     in
 
