@@ -29,15 +29,38 @@ let log ?(verbose = true) fmt =
   if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
 
 let clear_progress_bar () =
-  match !progress with Some p when p.is_tty -> Fmt.epr "\r\027[K%!" | _ -> ()
+  match !progress with
+  | Some p when p.is_tty ->
+      (* Clear current line and move to next line *)
+      Fmt.epr "\r\027[K%!";
+      flush stderr
+  | _ -> ()
+
+let redraw_progress_bar () =
+  match !progress with
+  | Some p when p.is_tty && p.current < p.total && p.current > 0 ->
+      (* Don't redraw if we're at 100% or haven't started - it will be finalized soon *)
+      let frame = spinner_frames.(!spinner_idx mod Array.length spinner_frames) in
+      let percent = if p.total > 0 then p.current * 100 / p.total else 0 in
+      let bar_width = 20 in
+      let filled = bar_width * percent / 100 in
+      let bar =
+        String.concat ""
+          (List.init bar_width (fun i -> if i < filled then "█" else "░"))
+      in
+      Fmt.epr "%s [%s] %d%% (%d/%d)%!" frame bar percent p.current p.total
+  | _ -> ()
 
 (* Log with progress bar cleared first - use for errors/important messages *)
 let log_clear ?(verbose = true) fmt =
-  Mutex.protect lock @@ fun () ->
-  if verbose then (
-    clear_progress_bar ();
-    Fmt.epr (fmt ^^ "@."))
-  else Fmt.kstr ignore fmt
+  Fmt.kstr
+    (fun msg ->
+      Mutex.protect lock @@ fun () ->
+      if verbose then (
+        clear_progress_bar ();
+        Fmt.epr "%s@." msg))
+        (* Don't redraw - let next log_spinner call do it naturally *)
+    fmt
 
 let log_error ~log_output ~filepath ~target ~command ?exn () =
   Mutex.protect lock @@ fun () ->
@@ -45,7 +68,8 @@ let log_error ~log_output ~filepath ~target ~command ?exn () =
   Fmt.epr "\n%s@." log_output;
   Fmt.epr "compilation failed for '%s' in target '%s'@.\tcommand: %s@." filepath
     target command;
-  match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ()
+  (match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ())
+  (* Don't redraw - let next log_spinner call do it naturally *)
 
 let log_spinner ?(verbose = true) fmt =
   if verbose then
@@ -54,7 +78,7 @@ let log_spinner ?(verbose = true) fmt =
   else
     (* Non-verbose mode: update progress bar *)
     Fmt.kstr
-      (fun msg ->
+      (fun _msg ->
         Mutex.protect lock @@ fun () ->
         match !progress with
         | Some p ->
@@ -72,9 +96,9 @@ let log_spinner ?(verbose = true) fmt =
               String.concat ""
                 (List.init bar_width (fun i -> if i < filled then "█" else "░"))
             in
-            (* Clear line and print progress - \r moves to start, \027[K clears to end *)
-            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d) %s%!" frame bar percent
-              p.current p.total msg
+            (* Clear line and print progress - stays on same line *)
+            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d)%!" frame bar percent p.current
+              p.total
         | None -> ())
       fmt
 

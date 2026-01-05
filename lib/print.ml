@@ -30,6 +30,13 @@ module Dot = Graph.Graphviz.Dot (struct
           `Style `Filled;
           `Fillcolor 0xE8F8E8;
         ]
+    | External e ->
+        [
+          `Shape `Box;
+          `Label (e.path ^ ":" ^ e.target);
+          `Style `Filled;
+          `Fillcolor 0xFFE6E6;
+        ]
 
   let get_subgraph v =
     match v with
@@ -37,6 +44,7 @@ module Dot = Graph.Graphviz.Dot (struct
     | Src _ -> None
     | Obj _ -> None
     | Output _ -> None
+    | External _ -> None
 
   let default_edge_attributes _ = []
 

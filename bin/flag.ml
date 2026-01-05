@@ -58,6 +58,10 @@ let build =
   let doc = "Compile before running" in
   Arg.(value & flag & info [ "build"; "b" ] ~doc)
 
+let clean_build =
+  let doc = "Clean before building" in
+  Arg.(value & flag & info [ "clean" ] ~doc)
+
 let run_args =
   let doc = "Arguments to pass to executable" in
   Arg.(value & pos_right 0 string [] & info [] ~doc ~docv:"ARG")

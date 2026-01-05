@@ -13,6 +13,7 @@ let rec collect_dependencies build_map name visited =
 
 let load_config env path =
   let normalized_path = Unix.realpath path in
+  Sys.chdir normalized_path;
   match Config.load ~env Eio.Path.(env#fs / normalized_path) with
   | Ok x -> x
   | Error (`Msg err) -> failwith err

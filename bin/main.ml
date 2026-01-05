@@ -4,6 +4,19 @@ open Zenon
 open Flag
 open Common
 
+let clean ~path ~builds () =
+  Eio_posix.run @@ fun env ->
+  if List.is_empty builds then
+    Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
+  else
+    let x = load_config env path in
+    let builds = String_set.of_list builds in
+    let x =
+      if String_set.is_empty builds then x
+      else List.filter (fun b -> String_set.mem b.Build.name builds) x
+    in
+    List.iter (fun (build : Build.t) -> Build.clean_obj build) x
+
 let cmd_build =
   Cmd.v (Cmd.info "build")
   @@
@@ -18,24 +31,15 @@ let cmd_build =
   and+ pkg = pkg
   and+ linker = linker
   and+ run = run
-  and+ verbose = verbose in
+  and+ verbose = verbose
+  and+ do_clean = clean_build in
+  let verbosity_level =
+    if not (Unix.isatty Unix.stderr) then max 1 (List.length verbose)
+    else List.length verbose
+  in
+  if do_clean then clean ~path ~builds ();
   Build_command.build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run
-    ~arg ~pkg ~linker
-    ~log_level:(Util.log_level @@ List.length verbose)
-    ()
-
-let clean ~path ~builds () =
-  Eio_posix.run @@ fun env ->
-  if List.is_empty builds then
-    Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
-  else
-    let x = load_config env path in
-    let builds = String_set.of_list builds in
-    let x =
-      if String_set.is_empty builds then x
-      else List.filter (fun b -> String_set.mem b.Build.name builds) x
-    in
-    List.iter (fun (build : Build.t) -> Build.clean_obj build) x
+    ~arg ~pkg ~linker ~log_level:(Util.log_level verbosity_level) ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")

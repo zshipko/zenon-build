@@ -197,7 +197,6 @@ let rec read_file_or_default path =
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
-  Sys.chdir (Eio.Path.native_exn path);
   let () =
     List.iter
       (fun c -> Compiler.register @@ Compiler_config.compiler ~compilers:[] c)
