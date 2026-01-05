@@ -4,6 +4,15 @@ open Object_file
 
 type link_type = Executable | Shared | Static
 
+type t = {
+  name : string;
+  link_type : link_type;
+  exts : String_set.t;
+  has_runtime : bool;
+  command :
+    flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
+}
+
 let link_type_of_string s =
   match String.lowercase_ascii s with
   | "exe" | "executable" | "exec" | "bin" -> Executable
@@ -16,15 +25,6 @@ let string_of_link_type = function
   | Shared -> "shared"
   | Static -> "static"
 
-type t = {
-  name : string;
-  link_type : link_type;
-  exts : String_set.t;
-  has_runtime : bool;
-  command :
-    flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
-}
-
 let link t mgr ~output ~objs ~flags ~build_dir =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
@@ -34,7 +34,7 @@ let link t mgr ~output ~objs ~flags ~build_dir =
   try Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file
   with exn ->
     (try
-       let log = Eio.Path.load tmp_path in
+       let log = Log_file.get tmp_path in
        Util.log_clear "❌ linker failed: %s\n%s" (String.concat " " cmd) log
      with _ -> ());
     raise exn

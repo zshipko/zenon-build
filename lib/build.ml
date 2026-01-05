@@ -6,7 +6,7 @@ type t = {
   source : path;
   build : path;
   compiler_index : (string, Compiler.t) Hashtbl.t;
-  compilers : Compiler_set.t;
+  compilers : Compiler.Set.t;
   linker : Linker.t;
   script : string option;
   after : string option;
@@ -15,13 +15,13 @@ type t = {
   pkgconf : string list;
   ignore : Re.t list;
   output : path option;
-  mutable disable_cache : bool;
+  disable_cache : bool;
+  mtime : float;
+  parallel : bool;
   mutable files : Re.t list;
   mutable headers : Re.t list;
   mutable flags : Flags.t;
   mutable compiler_flags : (string, Flags.t) Hashtbl.t;
-  mtime : float;
-  parallel : bool;
 }
 
 let add_compile_flags t = Flags.add_compile_flags t.flags
@@ -34,10 +34,10 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     ?(disable_cache = false) ?output ~source ~name env =
   let compilers =
     match compilers with
-    | None -> Compiler_set.default
+    | None -> Compiler.Set.default
     | Some compilers ->
-        Compiler_set.union Compiler_set.default
-        @@ Compiler_set.of_list compilers
+        Compiler.Set.union Compiler.Set.default
+        @@ Compiler.Set.of_list compilers
   in
   let build =
     match build with
@@ -47,7 +47,7 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
   Eio.Path.mkdirs ~exists_ok:true build ~perm:0o755;
   let compiler_flags = Hashtbl.of_seq (List.to_seq compiler_flags) in
   let compiler_index = Hashtbl.create 8 in
-  Compiler_set.iter
+  Compiler.Set.iter
     (fun c ->
       String_set.iter (fun ext -> Hashtbl.replace compiler_index ext c) c.ext)
     compilers;
@@ -78,41 +78,42 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
 let special_dirs = String_set.of_list [ "zenon-build"; ".git"; ".jj" ]
 let is_special_dir name = String_set.mem name special_dirs
 
-let locate_files t patterns =
-  if List.is_empty patterns then []
-  else
-    let ignore = Re.alt t.ignore |> Re.compile in
-    let check_ignore f =
-      match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
-    in
-    let rec collect_all path =
-      let entries = Eio.Path.read_dir path in
-      List.concat_map
-        (fun name ->
-          let full_path = Eio.Path.(path / name) in
-          if Eio.Path.is_directory full_path then
-            if check_ignore name && not (is_special_dir name) then
-              collect_all full_path
-            else []
-          else [ full_path ])
-        entries
-    in
-    (* Collect all files first *)
-    let all_files = collect_all t.source in
-    (* Match files in pattern order, preserving order from config *)
-    let seen = Hashtbl.create (List.length all_files) in
-    List.concat_map
-      (fun pattern ->
-        let re = Re.compile pattern in
-        List.filter_map
-          (fun path ->
-            let path_str = Eio.Path.native_exn path in
-            if (not (Hashtbl.mem seen path_str)) && Re.execp re path_str then (
-              Hashtbl.add seen path_str true;
-              Some path)
-            else None)
-          all_files)
-      patterns
+let rec collect_all count check_ignore path =
+  let entries = Eio.Path.read_dir path in
+  Seq.concat_map
+    (fun name ->
+      incr count;
+      let full_path = Eio.Path.(path / name) in
+      if Eio.Path.is_directory full_path then
+        if check_ignore name && not (is_special_dir name) then
+          collect_all count check_ignore full_path
+        else Seq.empty
+      else Seq.return full_path)
+    (List.to_seq entries)
+
+let locate_files t = function
+  | [] -> []
+  | patterns ->
+      let ignore = Re.alt t.ignore |> Re.compile in
+      let check_ignore f =
+        match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
+      in
+      let count = ref 0 in
+      let all_files = collect_all count check_ignore t.source in
+      let seen = Hashtbl.create !count in
+      Seq.concat_map
+        (fun pattern ->
+          let re = Re.compile pattern in
+          Seq.filter_map
+            (fun path ->
+              let path_str = Eio.Path.native_exn path in
+              if (not (Hashtbl.mem seen path_str)) && Re.execp re path_str then (
+                Hashtbl.add seen path_str true;
+                Some path)
+              else None)
+            all_files)
+        (List.to_seq patterns)
+      |> List.of_seq
 
 let locate_source_files t : Source_file.t list =
   locate_files t t.files

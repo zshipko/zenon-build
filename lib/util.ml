@@ -6,6 +6,7 @@ type log_level = [ `Quiet | `Info | `Debug ]
 
 let log_level = function 0 -> `Quiet | 1 -> `Info | _ -> `Debug
 let is_verbose = function `Quiet -> false | `Info | `Debug -> true
+let is_debug = function `Debug -> true | _ -> false
 
 (* Progress bar state for non-verbose mode *)
 type progress_state = {
@@ -29,10 +30,6 @@ let finalize_progress () =
       progress := None
   | _ -> progress := None
 
-let log ?(verbose = true) fmt =
-  Mutex.protect lock @@ fun () ->
-  if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
-
 let clear_progress_bar () =
   match !progress with
   | Some p when p.is_tty ->
@@ -43,36 +40,41 @@ let clear_progress_bar () =
 
 let terminal_width = ref None
 
-let get_terminal_width () =
+let terminal_width ?(force = false) () =
+  if force then terminal_width := None;
   match !terminal_width with
   | Some w -> w
   | None ->
       let width =
-        try
-          (* Try COLUMNS environment variable first *)
-          match Sys.getenv_opt "COLUMNS" with
-          | Some cols -> int_of_string cols
-          | None ->
-              (* Fall back to tput *)
+        match Sys.getenv_opt "COLUMNS" with
+        | Some cols -> int_of_string cols
+        | None -> (
+            try
               let ic = Unix.open_process_in "tput cols" in
               let w = int_of_string (input_line ic) in
               close_in ic;
               w
-        with _ -> 80 (* Default to 80 if we can't determine *)
+            with _ -> 80)
       in
       terminal_width := Some width;
       width
 
-let truncate_left max_len s =
+let truncate_left ?(max_len = 30) s =
   if String.length s > max_len then
     String.sub s (String.length s - max_len) max_len
   else s
+
+let truncate_path_left ?max_len s =
+  let s = Eio.Path.native_exn s in
+  truncate_left ?max_len s
 
 let redraw_progress_bar () =
   match !progress with
   | Some p when p.is_tty && p.current < p.total && p.current > 0 ->
       (* Don't redraw if we're at 100% or haven't started - it will be finalized soon *)
-      let frame = spinner_frames.(!spinner_idx mod Array.length spinner_frames) in
+      let frame =
+        spinner_frames.(!spinner_idx mod Array.length spinner_frames)
+      in
       let percent = if p.total > 0 then p.current * 100 / p.total else 0 in
       let bar_width = 20 in
       let filled = bar_width * percent / 100 in
@@ -81,17 +83,20 @@ let redraw_progress_bar () =
           (List.init bar_width (fun i -> if i < filled then "█" else "░"))
       in
       (* Calculate available space for filename based on terminal width *)
-      let term_width = get_terminal_width () in
+      let term_width = terminal_width () in
       (* Format without filename to calculate fixed width *)
-      let fixed_part = Printf.sprintf "%s [%s] %d%% (%d/%d) "
-        frame bar percent p.current p.total in
+      let fixed_part =
+        Printf.sprintf "%s [%s] %d%% (%d/%d) " frame bar percent p.current
+          p.total
+      in
       let fixed_width = String.length fixed_part in
       let available_for_file = max 20 (term_width - fixed_width - 1) in
-      let file_display = truncate_left available_for_file p.current_file in
+      let file_display =
+        truncate_left ~max_len:available_for_file p.current_file
+      in
       Fmt.epr "%s%s%!" fixed_part file_display
   | _ -> ()
 
-(* Log with progress bar cleared first - use for errors/important messages *)
 let log_clear ?(verbose = true) fmt =
   Fmt.kstr
     (fun msg ->
@@ -102,21 +107,26 @@ let log_clear ?(verbose = true) fmt =
         redraw_progress_bar ()))
     fmt
 
-let log_error ~log_output ~filepath ~target ~command ?exn () =
+let log ?(verbose = true) fmt =
+  Mutex.protect lock @@ fun () ->
+  if verbose then Fmt.epr (fmt ^^ "@.") else Fmt.kstr ignore fmt
+
+let log_error ~log_output ~filepath ~target ?command ?exn () =
   Mutex.protect lock @@ fun () ->
   clear_progress_bar ();
   Fmt.epr "\n%s@." log_output;
-  Fmt.epr "compilation failed for '%s' in target '%s'@.\tcommand: %s@." filepath
-    target command;
-  (match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ());
+  Fmt.epr "compilation failed for '%s' in target '%s'@." filepath target;
+  let () =
+    match command with None -> () | Some cmd -> Fmt.epr "command: %s@." cmd
+  in
+  let () =
+    match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ()
+  in
   redraw_progress_bar ()
 
 let log_spinner ?(verbose = true) fmt =
-  if verbose then
-    (* Verbose mode: detailed logging with bullets *)
-    Mutex.protect lock @@ fun () -> Fmt.epr ("• " ^^ fmt ^^ "@.")
+  if verbose then Mutex.protect lock @@ fun () -> Fmt.epr ("• " ^^ fmt ^^ "@.")
   else
-    (* Non-verbose mode: update progress bar *)
     Fmt.kstr
       (fun msg ->
         Mutex.protect lock @@ fun () ->
@@ -131,19 +141,22 @@ let log_spinner ?(verbose = true) fmt =
             let percent =
               if p.total > 0 then p.current * 100 / p.total else 0
             in
-            let bar_width = 20 in
+            let bar_width = 25 in
             let filled = bar_width * percent / 100 in
             let bar =
               String.concat ""
                 (List.init bar_width (fun i -> if i < filled then "█" else "░"))
             in
             (* Calculate available space for filename based on terminal width *)
-            let term_width = get_terminal_width () in
-            let fixed_part = Printf.sprintf "\r\027[K%s [%s] %d%% (%d/%d) "
-              frame bar percent p.current p.total in
-            let fixed_width = String.length fixed_part - 5 in (* -5 for escape codes *)
+            let term_width = terminal_width () in
+            let fixed_part =
+              Printf.sprintf "\r\027[K%s [%s] %d%% (%d/%d) " frame bar percent
+                p.current p.total
+            in
+            let fixed_width = String.length fixed_part - 5 in
+            (* -5 for escape codes *)
             let available_for_file = max 20 (term_width - fixed_width - 1) in
-            let file_display = truncate_left available_for_file msg in
+            let file_display = truncate_left ~max_len:available_for_file msg in
             Fmt.epr "%s%s%!" fixed_part file_display
         | None -> ())
       fmt
@@ -221,7 +234,6 @@ let parse_gitignore path =
         else
           let pattern =
             if String.starts_with ~prefix:"/" line then
-              (* Remove leading / for anchored patterns *)
               String.sub line 1 (String.length line - 1)
             else line
           in

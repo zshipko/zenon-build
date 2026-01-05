@@ -2,16 +2,12 @@ open Types
 
 type t = {
   name : string;
-  command :
-    flags:Flags.t ->
-    sources:Source_file.t list ->
-    output:Object_file.t ->
-    string list;
+  command : flags:Flags.t -> output:Object_file.t -> string list;
   ext : String_set.t;
 }
 
 let c_like ?(force_color = "-fcolor-diagnostics") cc =
- fun ~flags ~sources:_ ~output ->
+ fun ~flags ~output ->
   cc
   @ [ force_color; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
   @ flags.Flags.compile
@@ -35,7 +31,7 @@ let ispc =
   {
     name = "ispc";
     command =
-      (fun ~flags ~sources:_ ~output ->
+      (fun ~flags ~output ->
         [
           "ispc";
           "--colored-output";
@@ -52,7 +48,7 @@ let ghc =
   {
     name = "ghc";
     command =
-      (fun ~flags ~sources:_ ~output ->
+      (fun ~flags ~output ->
         let hidir, include_paths =
           match Eio.Path.split output.Object_file.path with
           | None -> ([], [])
@@ -77,7 +73,7 @@ let mlton =
   {
     name = "mlton";
     command =
-      (fun ~flags ~sources:_ ~output ->
+      (fun ~flags ~output ->
         let out =
           Filename.quote (Eio.Path.native_exn output.Object_file.path)
         in
@@ -114,8 +110,7 @@ let flang =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false)
-    ~build_dir flags =
+let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime flags =
   let st =
     try
       Option.some
@@ -123,23 +118,27 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false)
           Eio.Path.stat ~follow:true output.source.path )
     with _ -> None
   in
+  let src_path = Util.truncate_path_left output.source.path in
+  let obj_path = Util.truncate_path_left output.Object_file.path in
   match st with
   | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
-      let src_path = Util.truncate_left 30 (Eio.Path.native_exn output.source.path) in
-      let obj_path = Util.truncate_left 30 (Eio.Path.native_exn output.Object_file.path) in
-      Util.log_spinner ~verbose "CACHE %s -> %s" src_path obj_path;
+      Util.log_spinner
+        ~verbose:(Util.is_verbose log_level)
+        "CACHE %s -> %s" src_path obj_path;
       None
   | _ ->
-      let src_path = Util.truncate_left 30 (Eio.Path.native_exn output.source.path) in
-      let obj_path = Util.truncate_left 30 (Eio.Path.native_exn output.Object_file.path) in
-      Util.log_spinner ~verbose "COMPILE(%s) %s -> %s" t.name src_path obj_path;
+      Util.log_spinner
+        ~verbose:(Util.is_verbose log_level)
+        "COMPILE(%s) %s -> %s" t.name src_path obj_path;
       Util.mkparent output.Object_file.path;
-      let cmd = t.command ~sources ~flags ~output in
+      let cmd = t.command ~flags ~output in
+      if log_level = `Debug then Util.log "  $ %s" (String.concat " " cmd);
       Log_file.with_log_file ~keep:true ~build_dir
         ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
       @@ fun (tmp_path, log_file) ->
       let proc =
-        Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file
+        Eio.Process.spawn env#process_mgr cmd ~sw ~stdout:log_file
+          ~stderr:log_file
       in
       Some (tmp_path, proc)
 
@@ -165,3 +164,13 @@ let find_by_name ?compilers c =
       | "sml" | "mlton" -> Some mlton
       | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
       | _ -> None)
+
+module Set = struct
+  include Set.Make (struct
+    type nonrec t = t
+
+    let compare a b = String_set.compare a.ext b.ext
+  end)
+
+  let default = of_list default
+end

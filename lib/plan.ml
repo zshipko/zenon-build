@@ -121,25 +121,22 @@ let build t (b : Build.t) =
                 \                 with extensions %a"
                 ext
                 (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string)
-                (Compiler_set.to_list b.compilers |> List.map (fun c -> c.name))
+                (Compiler.Set.to_list b.compilers |> List.map (fun c -> c.name))
                 (Fmt.list
                    ~sep:(Fmt.const Fmt.string ", ")
                    (Fmt.list ~sep:(Fmt.const Fmt.string ", ") Fmt.string))
-                (Compiler_set.to_list b.compilers
+                (Compiler.Set.to_list b.compilers
                 |> List.map (fun c -> String_set.to_list c.ext))
         in
+        let flags =
+          Flags.concat flags
+          @@ Flags.concat
+               (Hashtbl.find_opt b.compiler_flags ext
+               |> Option.value ~default:(Flags.v ()))
+               b.flags
+        in
         G.add_edge_e t.graph
-        @@ G.E.create src_node
-             (Some
-                (Compiler
-                   ( compiler,
-                     Some
-                       (Flags.concat flags
-                       @@ Flags.concat
-                            (Hashtbl.find_opt b.compiler_flags ext
-                            |> Option.value ~default:(Flags.v ()))
-                            b.flags) )))
-             obj_node;
+        @@ G.E.create src_node (Some (Compiler (compiler, Some flags))) obj_node;
         Option.iter
           (fun node ->
             let edge_label =
@@ -156,7 +153,7 @@ let run_script mgr ~build_dir s =
   try Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file
   with exn ->
     (try
-       let log = Eio.Path.load tmp_path in
+       let log = Log_file.get tmp_path in
        Util.log_clear "❌ script failed %s\n%s" s log
      with _ -> ());
     raise exn
@@ -212,20 +209,15 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                 let () =
                   let combined_flags = Flags.concat b_flags flags in
                   let key =
-                    c.name
+                    Digest.to_hex @@ Digest.string @@ c.name
                     ^ String.concat "_" flags.link
                     ^ String.concat "_" flags.compile
                   in
                   try
-                    let cmd =
-                      c.command ~sources ~flags:combined_flags ~output:obj
-                    in
-                    if log_level = `Debug then
-                      Util.log "  $ %s" (String.concat " " cmd);
                     let task =
-                      Compiler.compile_obj c b.env#process_mgr ~sources
-                        ~output:obj ~sw ~build_mtime:b.mtime ~verbose
-                        ~build_dir:b.build combined_flags
+                      Compiler.compile_obj c ~output:obj ~sw ~log_level
+                        ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
+                        combined_flags
                     in
                     (match task with
                     | Some (log_path, process) -> (
@@ -233,10 +225,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                           Eio.Process.await_exn process;
                           Eio.Path.unlink log_path (* Delete log on success *)
                         with exn ->
-                          let log = Eio.Path.load log_path in
-                          Eio.Path.unlink log_path;
+                          let log = Log_file.get ~unlink:true log_path in
                           let cmd =
-                            c.command ~sources ~flags:combined_flags ~output:obj
+                            c.command ~flags:combined_flags ~output:obj
                           in
                           let filepath =
                             Util.relative_to b.source obj.source.path
@@ -253,9 +244,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                   | Build_failed _ as e -> raise e
                   | Eio.Cancel.Cancelled _ as e -> raise e
                   | exn ->
-                      let cmd =
-                        c.command ~sources ~flags:combined_flags ~output:obj
-                      in
+                      let cmd = c.command ~flags:combined_flags ~output:obj in
                       let filepath =
                         Util.relative_to b.source obj.source.path
                       in
@@ -270,7 +259,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
-      (if log_level = `Debug then
+      (if Util.is_debug log_level then
          let link_cmd = linker.command ~flags:!link_flags ~objs ~output in
          Util.log "  $ %s" (String.concat " " link_cmd));
       Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags
@@ -341,158 +330,145 @@ let check_dependency_cycles t =
           (String.concat " -> " cycle_names))
     t.graph
 
-let run_all ?execute ?args ?(log_level = `Debug) t builds =
+let run_all ?execute ?args ?(log_level = `Debug) t ~env builds =
   add_dependency_edges t builds;
   check_dependency_cycles t;
 
-  if List.is_empty builds then ()
-  else
-    let env = (List.hd builds).env in
+  (* Check command availability before building *)
+  let checker = Command.v env#process_mgr in
+  let required_commands =
+    List.fold_left
+      (fun acc (build : Build.t) ->
+        let acc =
+          Hashtbl.fold
+            (fun _ compiler acc ->
+              let cmd = compiler.Compiler.name in
+              String_set.add cmd acc)
+            build.compiler_index acc
+        in
+        let linker_cmd = build.linker.name in
+        String_set.add linker_cmd acc)
+      String_set.empty builds
+  in
+  Command.check_commands checker (String_set.to_list required_commands);
 
-    (* Check command availability before building *)
-    let checker = Command.v env#process_mgr in
-    let required_commands =
+  let verbose = Util.is_verbose log_level in
+  (if not verbose then
+     let total_objs =
+       List.fold_left
+         (fun acc (build : Build.t) ->
+           let sources =
+             Hashtbl.find_opt t.ordered_sources build.name
+             |> Option.value ~default:[]
+           in
+           acc + List.length sources)
+         0 builds
+     in
+     Util.init_progress total_objs);
+
+  let external_deps =
+    G.fold_vertex
+      (fun v acc -> match v with External e -> e :: acc | _ -> acc)
+      t.graph []
+  in
+
+  let ndeps = Hashtbl.create (List.length builds + List.length external_deps) in
+  List.iter
+    (fun (build : Build.t) ->
+      Hashtbl.add ndeps (value_id (Build build)) (List.length build.depends_on))
+    builds;
+  List.iter
+    (fun (e : external_dep) ->
+      let key = value_id (External e) in
+      let n = G.in_degree t.graph (External e) in
+      Hashtbl.add ndeps key n)
+    external_deps;
+
+  let ready = ref [] in
+  List.iter
+    (fun (build : Build.t) ->
+      if Hashtbl.find ndeps (value_id (Build build)) = 0 then
+        ready := Build build :: !ready)
+    builds;
+
+  List.iter
+    (fun (e : external_dep) ->
+      if Hashtbl.find ndeps (value_id (External e)) = 0 then
+        ready := External e :: !ready)
+    external_deps;
+
+  let executed =
+    Hashtbl.create (List.length builds + List.length external_deps)
+  in
+
+  while not (List.is_empty !ready) do
+    let completed =
+      Eio.Fiber.List.filter_map
+        (fun node ->
+          try
+            match node with
+            | Build build ->
+                run_build ?execute ?execute_args:args ~log_level t build;
+                Hashtbl.add executed (value_id node) ();
+                Some node
+            | External e ->
+                let zenon_bin = Sys.executable_name in
+                let start = Unix.gettimeofday () in
+                Util.log_clear "◎ %s:%s" e.path e.target;
+                let name =
+                  Digest.to_hex @@ Digest.string
+                  @@ Format.sprintf "%s:%s" e.path e.target
+                in
+                Log_file.with_log_file ~build_dir:e.build.build ~name
+                @@ fun (tmp_file, log_file) ->
+                (try
+                   Eio.Process.run env#process_mgr ~stderr:log_file
+                     ~stdout:log_file
+                     ~cwd:Eio.Path.(env#fs / e.path)
+                     [ zenon_bin; "build"; e.target ];
+                   Util.log_clear "✓ %s:%s (%fsec)" e.path e.target
+                     (Unix.gettimeofday () -. start);
+                   Hashtbl.add executed (value_id node) ()
+                 with _exn ->
+                   let log = Log_file.get tmp_file in
+                   Util.log_clear "%s" log;
+                   raise (Build_failed ""));
+                Some node
+            | _ -> None
+          with
+          | Build_failed _ ->
+              (* Error already logged *)
+              (match node with
+              | Build b -> Util.log_clear "❌ %s" b.name
+              | External e -> Util.log_clear "❌ %s:%s" e.path e.target
+              | _ -> assert false);
+              None
+          | Failure msg ->
+              (match node with
+              | Build b -> Util.log_clear "❌ %s\n%s" b.name msg
+              | External e -> Util.log_clear "❌ %s:%s\n%s" e.path e.target msg
+              | _ -> assert false);
+              None)
+        !ready
+    in
+
+    ready :=
       List.fold_left
-        (fun acc (build : Build.t) ->
-          let acc =
-            Hashtbl.fold
-              (fun _ compiler acc ->
-                let cmd = compiler.Compiler.name in
-                String_set.add cmd acc)
-              build.compiler_index acc
-          in
-          let linker_cmd = build.linker.name in
-          String_set.add linker_cmd acc)
-        String_set.empty builds
-    in
-    Command.check_commands checker (String_set.to_list required_commands);
+        (fun newly_ready completed_node ->
+          G.fold_succ
+            (fun succ acc ->
+              let succ_id = value_id succ in
+              match Hashtbl.find_opt ndeps succ_id with
+              | Some n_deps ->
+                  let n = Int.pred n_deps in
+                  Hashtbl.replace ndeps succ_id n;
+                  if n = 0 && not (Hashtbl.mem executed succ_id) then
+                    succ :: acc
+                  else acc
+              | None -> acc)
+            t.graph completed_node newly_ready)
+        [] completed
+  done;
 
-    (* Initialize global progress bar with total object count *)
-    let verbose = Util.is_verbose log_level in
-    (if not verbose then
-       let total_objs =
-         List.fold_left
-           (fun acc (build : Build.t) ->
-             let sources =
-               Hashtbl.find_opt t.ordered_sources build.name
-               |> Option.value ~default:[]
-             in
-             acc + List.length sources)
-           0 builds
-       in
-       Util.init_progress total_objs);
-
-    let external_deps = ref [] in
-    G.iter_vertex
-      (fun v ->
-        match v with
-        | External e -> external_deps := e :: !external_deps
-        | _ -> ())
-      t.graph;
-
-    let ndeps =
-      Hashtbl.create (List.length builds + List.length !external_deps)
-    in
-    List.iter
-      (fun (build : Build.t) ->
-        Hashtbl.add ndeps (value_id (Build build))
-          (List.length build.depends_on))
-      builds;
-    List.iter
-      (fun (e : external_dep) ->
-        let key = value_id (External e) in
-        let n = G.in_degree t.graph (External e) in
-        Hashtbl.add ndeps key n)
-      !external_deps;
-
-    (* Find all nodes (builds + externals) with no dependencies *)
-    let ready = ref [] in
-    List.iter
-      (fun (build : Build.t) ->
-        if Hashtbl.find ndeps (value_id (Build build)) = 0 then
-          ready := Build build :: !ready)
-      builds;
-    List.iter
-      (fun (e : external_dep) ->
-        if Hashtbl.find ndeps (value_id (External e)) = 0 then
-          ready := External e :: !ready)
-      !external_deps;
-
-    let executed =
-      Hashtbl.create (List.length builds + List.length !external_deps)
-    in
-
-    (* Build targets in parallel, level by level *)
-    while not (List.is_empty !ready) do
-      let completed =
-        Eio.Fiber.List.filter_map
-          (fun node ->
-            try
-              match node with
-              | Build build ->
-                  run_build ?execute ?execute_args:args ~log_level t build;
-                  Hashtbl.add executed (value_id node) ();
-                  Some node
-              | External e ->
-                  let zenon_bin = Sys.executable_name in
-                  let start = Unix.gettimeofday () in
-                  Util.log_clear "◎ %s:%s" e.path e.target;
-                  Log_file.with_log_file ~build_dir:e.build.build
-                    ~name:
-                      (Digest.to_hex @@ Digest.string
-                      @@ Format.sprintf "%s:%s" e.path e.target)
-                  @@ fun (tmp_file, log_file) ->
-                  (try
-                     Eio.Process.run env#process_mgr ~stderr:log_file
-                       ~stdout:log_file
-                       ~cwd:Eio.Path.(env#fs / e.path)
-                       [ zenon_bin; "build"; e.target ];
-                     Util.log_clear "✓ %s:%s (%fsec)" e.path e.target
-                       (Unix.gettimeofday () -. start);
-                     Hashtbl.add executed (value_id node) ()
-                   with _exn ->
-                     let log = Eio.Path.load tmp_file in
-                     Util.log_clear "%s" log;
-                     raise (Build_failed ""));
-                  Some node
-              | _ -> None
-            with
-            | Build_failed _ ->
-                (* Error already logged *)
-                (match node with
-                | Build b -> Util.log_clear "❌ %s" b.name
-                | External e -> Util.log_clear "❌ %s:%s" e.path e.target
-                | _ -> ());
-                None
-            | Failure msg ->
-                (match node with
-                | Build b -> Util.log_clear "❌ %s\n%s" b.name msg
-                | External e -> Util.log_clear "❌ %s:%s\n%s" e.path e.target msg
-                | _ -> ());
-                None)
-          !ready
-      in
-
-      let count = ref 0 in
-      ready :=
-        List.fold_left
-          (fun newly_ready completed_node ->
-            incr count;
-            G.fold_succ
-              (fun succ acc ->
-                let succ_id = value_id succ in
-                match Hashtbl.find_opt ndeps succ_id with
-                | Some n_deps ->
-                    let n = Int.pred n_deps in
-                    Hashtbl.replace ndeps succ_id n;
-                    if n = 0 && not (Hashtbl.mem executed succ_id) then
-                      succ :: acc
-                    else acc
-                | None -> acc)
-              t.graph completed_node newly_ready)
-          [] completed
-    done;
-
-    (* Finalize progress bar after all builds complete *)
-    let verbose = Util.is_verbose log_level in
-    if not verbose then Util.finalize_progress ()
+  (* Finalize progress bar after all builds complete *)
+  if not verbose then Util.finalize_progress ()

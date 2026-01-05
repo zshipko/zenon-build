@@ -83,8 +83,7 @@ let compile_commands ~path ~builds ~format ?output () =
                   in
                   let final_flags = Flags.concat b_flags file_flags in
                   let command =
-                    compiler.Compiler.command ~flags:final_flags
-                      ~sources:[ source ] ~output:obj
+                    compiler.Compiler.command ~flags:final_flags ~output:obj
                   in
                   let entry =
                     `O
