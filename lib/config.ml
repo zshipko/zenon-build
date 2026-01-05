@@ -9,6 +9,7 @@ module Compiler_config = struct
     ext : string list; [@default []]
     command : string list option; [@default None]
     link_type : string; [@key "link-type"] [@default "exe"]
+    has_runtime : bool; [@key "has-runtime"] [@default false]
   }
   [@@deriving yaml]
 
@@ -42,7 +43,7 @@ module Compiler_config = struct
             name = t.name;
             link_type = Linker.link_type_of_string t.link_type;
             exts = String_set.of_list t.ext;
-            has_runtime = false;
+            has_runtime = t.has_runtime;
             command =
               (fun ~flags ~objs ~output ->
                 List.fold_left
@@ -131,7 +132,13 @@ let default_compilers =
   List.map
     (fun c ->
       Compiler_config.
-        { name = c.Compiler.name; ext = []; command = None; link_type = "exe" })
+        {
+          name = c.Compiler.name;
+          ext = [];
+          command = None;
+          link_type = "exe";
+          has_runtime = false;
+        })
     Compiler.default
 
 let default_linkers =
@@ -143,6 +150,7 @@ let default_linkers =
           ext = [];
           command = None;
           link_type = Linker.string_of_link_type c.link_type;
+          has_runtime = c.has_runtime;
         })
     Linker.default
 
@@ -265,7 +273,13 @@ let init ?mtime ~env path t =
         let linker =
           Compiler_config.linker
             Compiler_config.
-              { name = linker_name; ext = []; link_type; command = None }
+              {
+                name = linker_name;
+                ext = [];
+                link_type;
+                command = None;
+                has_runtime = false;
+              }
         in
         let compiler_flags =
           List.map
