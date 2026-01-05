@@ -8,13 +8,18 @@ let log_level = function 0 -> `Quiet | 1 -> `Info | _ -> `Debug
 let is_verbose = function `Quiet -> false | `Info | `Debug -> true
 
 (* Progress bar state for non-verbose mode *)
-type progress_state = { mutable current : int; total : int; is_tty : bool }
+type progress_state = {
+  mutable current : int;
+  total : int;
+  is_tty : bool;
+  mutable current_file : string;
+}
 
 let progress : progress_state option ref = ref None
 
 let init_progress total =
   if Unix.isatty Unix.stderr && total > 0 then
-    progress := Some { current = 0; total; is_tty = true }
+    progress := Some { current = 0; total; is_tty = true; current_file = "" }
 
 let finalize_progress () =
   match !progress with
@@ -31,10 +36,37 @@ let log ?(verbose = true) fmt =
 let clear_progress_bar () =
   match !progress with
   | Some p when p.is_tty ->
-      (* Clear current line and move to next line *)
+      (* Clear current line *)
       Fmt.epr "\r\027[K%!";
       flush stderr
   | _ -> ()
+
+let terminal_width = ref None
+
+let get_terminal_width () =
+  match !terminal_width with
+  | Some w -> w
+  | None ->
+      let width =
+        try
+          (* Try COLUMNS environment variable first *)
+          match Sys.getenv_opt "COLUMNS" with
+          | Some cols -> int_of_string cols
+          | None ->
+              (* Fall back to tput *)
+              let ic = Unix.open_process_in "tput cols" in
+              let w = int_of_string (input_line ic) in
+              close_in ic;
+              w
+        with _ -> 80 (* Default to 80 if we can't determine *)
+      in
+      terminal_width := Some width;
+      width
+
+let truncate_left max_len s =
+  if String.length s > max_len then
+    String.sub s (String.length s - max_len) max_len
+  else s
 
 let redraw_progress_bar () =
   match !progress with
@@ -48,7 +80,15 @@ let redraw_progress_bar () =
         String.concat ""
           (List.init bar_width (fun i -> if i < filled then "█" else "░"))
       in
-      Fmt.epr "%s [%s] %d%% (%d/%d)%!" frame bar percent p.current p.total
+      (* Calculate available space for filename based on terminal width *)
+      let term_width = get_terminal_width () in
+      (* Format without filename to calculate fixed width *)
+      let fixed_part = Printf.sprintf "%s [%s] %d%% (%d/%d) "
+        frame bar percent p.current p.total in
+      let fixed_width = String.length fixed_part in
+      let available_for_file = max 20 (term_width - fixed_width - 1) in
+      let file_display = truncate_left available_for_file p.current_file in
+      Fmt.epr "%s%s%!" fixed_part file_display
   | _ -> ()
 
 (* Log with progress bar cleared first - use for errors/important messages *)
@@ -58,8 +98,8 @@ let log_clear ?(verbose = true) fmt =
       Mutex.protect lock @@ fun () ->
       if verbose then (
         clear_progress_bar ();
-        Fmt.epr "%s@." msg))
-        (* Don't redraw - let next log_spinner call do it naturally *)
+        Fmt.epr "%s@." msg;
+        redraw_progress_bar ()))
     fmt
 
 let log_error ~log_output ~filepath ~target ~command ?exn () =
@@ -68,13 +108,8 @@ let log_error ~log_output ~filepath ~target ~command ?exn () =
   Fmt.epr "\n%s@." log_output;
   Fmt.epr "compilation failed for '%s' in target '%s'@.\tcommand: %s@." filepath
     target command;
-  (match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ())
-  (* Don't redraw - let next log_spinner call do it naturally *)
-
-let truncate_left max_len s =
-  if String.length s > max_len then
-    String.sub s (String.length s - max_len) max_len
-  else s
+  (match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ());
+  redraw_progress_bar ()
 
 let log_spinner ?(verbose = true) fmt =
   if verbose then
@@ -88,6 +123,7 @@ let log_spinner ?(verbose = true) fmt =
         match !progress with
         | Some p ->
             p.current <- p.current + 1;
+            p.current_file <- msg;
             let frame =
               spinner_frames.(!spinner_idx mod Array.length spinner_frames)
             in
@@ -101,12 +137,14 @@ let log_spinner ?(verbose = true) fmt =
               String.concat ""
                 (List.init bar_width (fun i -> if i < filled then "█" else "░"))
             in
-            (* Truncate message to avoid wrapping - keep the end (filename) *)
-            let max_msg_len = 60 in
-            let msg = truncate_left max_msg_len msg in
-            (* Clear line and print progress - stays on same line *)
-            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d) %s%!" frame bar percent p.current
-              p.total msg
+            (* Calculate available space for filename based on terminal width *)
+            let term_width = get_terminal_width () in
+            let fixed_part = Printf.sprintf "\r\027[K%s [%s] %d%% (%d/%d) "
+              frame bar percent p.current p.total in
+            let fixed_width = String.length fixed_part - 5 in (* -5 for escape codes *)
+            let available_for_file = max 20 (term_width - fixed_width - 1) in
+            let file_display = truncate_left available_for_file msg in
+            Fmt.epr "%s%s%!" fixed_part file_display
         | None -> ())
       fmt
 
