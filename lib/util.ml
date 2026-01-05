@@ -71,6 +71,11 @@ let log_error ~log_output ~filepath ~target ~command ?exn () =
   (match exn with Some e -> Fmt.epr "\tmessage: %a@." Fmt.exn e | None -> ())
   (* Don't redraw - let next log_spinner call do it naturally *)
 
+let truncate_left max_len s =
+  if String.length s > max_len then
+    String.sub s (String.length s - max_len) max_len
+  else s
+
 let log_spinner ?(verbose = true) fmt =
   if verbose then
     (* Verbose mode: detailed logging with bullets *)
@@ -78,7 +83,7 @@ let log_spinner ?(verbose = true) fmt =
   else
     (* Non-verbose mode: update progress bar *)
     Fmt.kstr
-      (fun _msg ->
+      (fun msg ->
         Mutex.protect lock @@ fun () ->
         match !progress with
         | Some p ->
@@ -96,9 +101,12 @@ let log_spinner ?(verbose = true) fmt =
               String.concat ""
                 (List.init bar_width (fun i -> if i < filled then "█" else "░"))
             in
+            (* Truncate message to avoid wrapping - keep the end (filename) *)
+            let max_msg_len = 60 in
+            let msg = truncate_left max_msg_len msg in
             (* Clear line and print progress - stays on same line *)
-            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d)%!" frame bar percent p.current
-              p.total
+            Fmt.epr "\r\027[K%s [%s] %d%% (%d/%d) %s%!" frame bar percent p.current
+              p.total msg
         | None -> ())
       fmt
 
