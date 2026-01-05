@@ -197,6 +197,7 @@ let rec read_file_or_default path =
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
+  Sys.chdir (Eio.Path.native_exn path);
   let () =
     List.iter
       (fun c -> Compiler.register @@ Compiler_config.compiler ~compilers:[] c)
@@ -307,5 +308,13 @@ let init ?mtime ~env path t =
 
 let load ~env path =
   match read_file_or_default path with
-  | Ok (config, mtime) -> Ok (init ~mtime ~env path config)
+  | Ok (config, mtime) ->
+      let path =
+        if Eio.Path.is_directory path then path
+        else
+          match Eio.Path.split path with
+          | None -> assert false
+          | Some (p, _) -> p
+      in
+      Ok (init ~mtime ~env path config)
   | Error e -> Error e

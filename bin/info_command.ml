@@ -13,7 +13,7 @@ let info ~path ~builds () =
   List.iter
     (fun (b : Build.t) ->
       let sources = Build.locate_source_files b in
-      let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
+      let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
       Fmt.pr "@[<v 2>Target: %s@," b.name;
       (match b.output with
       | Some p -> Fmt.pr "Output: %s@," (Eio.Path.native_exn p)

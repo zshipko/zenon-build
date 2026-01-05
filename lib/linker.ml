@@ -184,13 +184,14 @@ let find_by_name linkers l =
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | _ -> None)
 
-let match_linker ~source_exts linkers =
+let match_linker ~target ~source_exts linkers =
   let matching_linkers =
     List.filter
       (fun linker ->
         linker.has_runtime
         && not (String_set.is_empty (String_set.inter linker.exts source_exts)))
       linkers
+    |> List.sort_uniq (fun a b -> String.compare a.name b.name)
   in
   match matching_linkers with
   | [] -> Ok None
@@ -198,11 +199,12 @@ let match_linker ~source_exts linkers =
   | linkers ->
       Error
         (Printf.sprintf
-           "conflicting linkers detected. You will need to explicitly specify \
-            a linker. linkers detected: %s"
+           "conflicting linkers detected in target '%s'. You will need to \
+            explicitly specify a linker. linkers detected: %s"
+           target
            (String.concat ", " (List.map (fun l -> l.name) linkers)))
 
-let auto_select_linker ~sources ?(linker = clang) () =
+let auto_select_linker ~sources ?(linker = clang) target =
   if linker.has_runtime then linker
   else
     let source_exts =
@@ -210,10 +212,10 @@ let auto_select_linker ~sources ?(linker = clang) () =
         (fun acc src -> String_set.add (Source_file.ext src) acc)
         String_set.empty sources
     in
-    match match_linker ~source_exts default with
+    match match_linker ~target ~source_exts default with
     | Ok (Some linker) -> linker
     | _ -> (
-        match match_linker ~source_exts !all with
+        match match_linker ~target ~source_exts !all with
         | Ok (Some linker) -> linker
         | Ok None -> linker
         | Error msg -> Fmt.failwith "%s" msg)

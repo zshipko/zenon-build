@@ -52,20 +52,13 @@ let ghc =
   {
     name = "ghc";
     command =
-      (fun ~flags ~sources ~output ->
-        let include_paths =
-          List.filter_map
-            (fun source ->
-              match Eio.Path.split source.Source_file.path with
-              | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
-              | None -> None)
-            sources
-          |> List.sort_uniq String.compare
-        in
-        let hidir =
+      (fun ~flags ~sources:_ ~output ->
+        let hidir, include_paths =
           match Eio.Path.split output.Object_file.path with
-          | None -> []
-          | Some (parent, _) -> [ "-hidir"; Eio.Path.native_exn parent ]
+          | None -> ([], [])
+          | Some (parent, _) ->
+              let dir = Eio.Path.native_exn parent in
+              ([ "-hidir"; dir ], [ "-i" ^ dir ])
         in
         [
           "ghc";

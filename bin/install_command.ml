@@ -22,7 +22,7 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
         | Some output_path -> (
             let sources = Build.locate_source_files b in
             let linker =
-              Linker.auto_select_linker ~sources ~linker:b.linker ()
+              Linker.auto_select_linker ~sources ~linker:b.linker b.name
             in
             let install_dir =
               match linker.link_type with
@@ -88,7 +88,7 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
             | `Regular_file -> (
                 let sources = Build.locate_source_files b in
                 let linker =
-                  Linker.auto_select_linker ~sources ~linker:b.linker ()
+                  Linker.auto_select_linker ~sources ~linker:b.linker b.name
                 in
                 let install_dir =
                   match linker.link_type with

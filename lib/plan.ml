@@ -59,9 +59,14 @@ module G = Make (struct
     Option.compare String.compare (Option.map cmd_id a) (Option.map cmd_id b)
 end)
 
-type t = { graph : G.t }
+module Cycles = Graph.Cycles.Johnson (G)
 
-let v () = { graph = G.create () }
+type t = {
+  graph : G.t;
+  ordered_sources : (string, Source_file.t list) Hashtbl.t;
+}
+
+let v () = { graph = G.create (); ordered_sources = Hashtbl.create 16 }
 let graph t = t.graph
 
 let build t (b : Build.t) =
@@ -70,6 +75,8 @@ let build t (b : Build.t) =
       Build.add_source_file b "*.c"
   in
   let source_files = Build.locate_source_files b in
+  (* Store ordered source files in the plan for later use *)
+  Hashtbl.replace t.ordered_sources b.name source_files;
   let flags = Flags.v () in
   let build_node = Build b in
   let output_node = Option.map (fun x -> Output x) b.output in
@@ -77,7 +84,7 @@ let build t (b : Build.t) =
   Option.iter (G.add_vertex t.graph) output_node;
   let ignore_regex = Re.compile (Re.alt b.ignore) in
   let linker =
-    Linker.auto_select_linker ~sources:source_files ~linker:b.linker ()
+    Linker.auto_select_linker ~sources:source_files ~linker:b.linker b.name
   in
   Eio.Fiber.List.iter
     (fun source_file ->
@@ -164,21 +171,22 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
   let link_flags = ref b_flags in
   let count = ref 0 in
-  let sources, objs =
-    G.fold_succ_e
-      (fun edge (sources, objs) ->
-        match G.E.dst edge with
-        | Src s as v' ->
-            let obj =
-              Object_file.of_source ~root:b.source ~build_name:b.name
-                ~build_dir:Eio.Path.(b.build / "obj")
-                s
-            in
-            (s :: sources, (v', obj) :: objs)
-        | _ -> (sources, objs))
-      t.graph (Build b) ([], [])
+  (* Use ordered sources from Plan hashtable to preserve file order from config *)
+  let sources =
+    Hashtbl.find_opt t.ordered_sources b.name |> Option.value ~default:[]
   in
-  let linker = Linker.auto_select_linker ~sources ~linker:b.linker () in
+  let objs =
+    List.map
+      (fun s ->
+        let obj =
+          Object_file.of_source ~root:b.source ~build_name:b.name
+            ~build_dir:Eio.Path.(b.build / "obj")
+            s
+        in
+        (Src s, obj))
+      sources
+  in
+  let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
 
   let visited_flags = Hashtbl.create 8 in
 
@@ -308,8 +316,22 @@ let add_dependency_edges t builds =
         build.depends_on)
     builds
 
+let check_dependency_cycles t =
+  Cycles.iter_cycles
+    (fun cycle ->
+      let cycle_names =
+        List.filter_map
+          (function Build b -> Some b.Build.name | _ -> None)
+          cycle
+      in
+      if not (List.is_empty cycle_names) then
+        Fmt.failwith "Circular dependency detected: %s"
+          (String.concat " -> " cycle_names))
+    t.graph
+
 let run_all ?execute ?args ?(log_level = `Debug) t builds =
   add_dependency_edges t builds;
+  check_dependency_cycles t;
 
   (* Check command availability before building *)
   (if not (List.is_empty builds) then
