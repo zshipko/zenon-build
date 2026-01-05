@@ -106,3 +106,12 @@ build:
     target: parallel-test/run
     files:
       - '*.c'
+
+  # Test 11: Ocaml executable
+  - name: simple-ml
+    root: simple-ml
+    target: simple-ml/run
+    parallel: false
+    files:
+      - 'a.ml'
+      - 'hello.ml'

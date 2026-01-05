@@ -59,11 +59,11 @@ let ghc =
           | Some (p, _) -> [ "-hidir"; Eio.Path.native_exn p ]
         in
         let include_paths =
-          List.concat_map
+          List.map
             (fun obj ->
-              match Eio.Path.split obj.Object_file.path with
+              match Eio.Path.split obj.Object_file.source.path with
               | None -> assert false
-              | Some (p, _) -> [ "-i"; Eio.Path.native_exn p ])
+              | Some (p, _) -> "-i" ^ Eio.Path.native_exn p)
             objects
         in
         [
@@ -153,7 +153,7 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
       in
       Some (tmp_path, proc)
 
-let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang; ocaml ]
+let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
 let all = ref default
 
 let register compiler =
@@ -174,7 +174,6 @@ let find_by_name ?compilers c =
       | "flang-new" | "flang" | "fortran" -> Some flang
       | "sml" | "mlton" -> Some mlton
       | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
-      | "ocaml" | "ml" | "ocamlfind" -> Some ocaml
       | _ -> None)
 
 module Set = struct

@@ -224,9 +224,8 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                     | Some (log_path, process) -> (
                         try
                           Eio.Process.await_exn process;
-                          Eio.Path.unlink log_path;
-                          (* Delete log on success *)
-                          objects := obj :: !objects
+                          objects := obj :: !objects;
+                          Eio.Path.unlink log_path (* Delete log on success *)
                         with exn ->
                           let log = Log_file.get ~unlink:true log_path in
                           let cmd =
