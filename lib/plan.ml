@@ -192,6 +192,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   let visited_flags = Hashtbl.create 8 in
 
   let start = Unix.gettimeofday () in
+  let objects = ref [] in
 
   Eio.Switch.run @@ fun sw ->
   let objs =
@@ -217,17 +218,20 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                     let task =
                       Compiler.compile_obj c ~output:obj ~sw ~log_level
                         ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
-                        combined_flags
+                        ~objects:!objects combined_flags
                     in
                     (match task with
                     | Some (log_path, process) -> (
                         try
                           Eio.Process.await_exn process;
-                          Eio.Path.unlink log_path (* Delete log on success *)
+                          Eio.Path.unlink log_path;
+                          (* Delete log on success *)
+                          objects := obj :: !objects
                         with exn ->
                           let log = Log_file.get ~unlink:true log_path in
                           let cmd =
                             c.command ~flags:combined_flags ~output:obj
+                              ~objects:!objects
                           in
                           let filepath =
                             Util.relative_to b.source obj.source.path
@@ -244,7 +248,10 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                   | Build_failed _ as e -> raise e
                   | Eio.Cancel.Cancelled _ as e -> raise e
                   | exn ->
-                      let cmd = c.command ~flags:combined_flags ~output:obj in
+                      let cmd =
+                        c.command ~flags:combined_flags ~output:obj
+                          ~objects:!objects
+                      in
                       let filepath =
                         Util.relative_to b.source obj.source.path
                       in

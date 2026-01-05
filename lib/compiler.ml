@@ -2,12 +2,16 @@ open Types
 
 type t = {
   name : string;
-  command : flags:Flags.t -> output:Object_file.t -> string list;
+  command :
+    flags:Flags.t ->
+    objects:Object_file.t list ->
+    output:Object_file.t ->
+    string list;
   ext : String_set.t;
 }
 
 let c_like ?(force_color = "-fcolor-diagnostics") cc =
- fun ~flags ~output ->
+ fun ~flags ~objects:_ ~output ->
   cc
   @ [ force_color; "-c"; "-o"; Eio.Path.native_exn output.Object_file.path ]
   @ flags.Flags.compile
@@ -31,7 +35,7 @@ let ispc =
   {
     name = "ispc";
     command =
-      (fun ~flags ~output ->
+      (fun ~flags ~objects:_ ~output ->
         [
           "ispc";
           "--colored-output";
@@ -48,13 +52,19 @@ let ghc =
   {
     name = "ghc";
     command =
-      (fun ~flags ~output ->
-        let hidir, include_paths =
+      (fun ~flags ~objects ~output ->
+        let hidir =
           match Eio.Path.split output.Object_file.path with
-          | None -> ([], [])
-          | Some (parent, _) ->
-              let dir = Eio.Path.native_exn parent in
-              ([ "-hidir"; dir ], [ "-i" ^ dir ])
+          | None -> assert false
+          | Some (p, _) -> [ "-hidir"; Eio.Path.native_exn p ]
+        in
+        let include_paths =
+          List.concat_map
+            (fun obj ->
+              match Eio.Path.split obj.Object_file.path with
+              | None -> assert false
+              | Some (p, _) -> [ "-i"; Eio.Path.native_exn p ])
+            objects
         in
         [
           "ghc";
@@ -73,7 +83,7 @@ let mlton =
   {
     name = "mlton";
     command =
-      (fun ~flags ~output ->
+      (fun ~flags ~objects:_ ~output ->
         let out =
           Filename.quote (Eio.Path.native_exn output.Object_file.path)
         in
@@ -110,7 +120,8 @@ let flang =
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
   }
 
-let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime flags =
+let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
+    flags =
   let st =
     try
       Option.some
@@ -131,7 +142,7 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime flags =
         ~verbose:(Util.is_verbose log_level)
         "COMPILE(%s) %s -> %s" t.name src_path obj_path;
       Util.mkparent output.Object_file.path;
-      let cmd = t.command ~flags ~output in
+      let cmd = t.command ~flags ~output ~objects in
       if log_level = `Debug then Util.log "  $ %s" (String.concat " " cmd);
       Log_file.with_log_file ~keep:true ~build_dir
         ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
@@ -142,7 +153,7 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime flags =
       in
       Some (tmp_path, proc)
 
-let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
+let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang; ocaml ]
 let all = ref default
 
 let register compiler =
@@ -163,6 +174,7 @@ let find_by_name ?compilers c =
       | "flang-new" | "flang" | "fortran" -> Some flang
       | "sml" | "mlton" -> Some mlton
       | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
+      | "ocaml" | "ml" | "ocamlfind" -> Some ocaml
       | _ -> None)
 
 module Set = struct

@@ -21,7 +21,7 @@ module Compiler_config = struct
             name = t.name;
             ext = String_set.of_list t.ext;
             command =
-              (fun ~flags ~output ->
+              (fun ~flags ~objects:_ ~output ->
                 List.fold_left
                   (fun (acc : string list) x ->
                     if String.equal x "#output" then

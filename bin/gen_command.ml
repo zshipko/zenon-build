@@ -65,7 +65,7 @@ let compile_commands ~path ~builds ~format ?output () =
           let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
           let flags = Flags.v () in
           let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
-
+          let objects = ref [] in
           List.iter
             (fun (source : Source_file.t) ->
               let ext = Source_file.ext source in
@@ -77,13 +77,15 @@ let compile_commands ~path ~builds ~format ?output () =
                       ~build_dir:Eio.Path.(b.build / "obj")
                       source
                   in
+                  objects := obj :: !objects;
                   let file_flags =
                     Hashtbl.find_opt b.compiler_flags ext
                     |> Option.value ~default:(Flags.v ())
                   in
                   let final_flags = Flags.concat b_flags file_flags in
                   let command =
-                    compiler.Compiler.command ~flags:final_flags ~output:obj
+                    compiler.Compiler.command ~objects:!objects
+                      ~flags:final_flags ~output:obj
                   in
                   let entry =
                     `O

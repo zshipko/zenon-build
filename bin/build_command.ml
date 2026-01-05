@@ -21,7 +21,13 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                    (fun name ->
                      Config.Compiler_config.(
                        linker
-                         { name; ext = []; command = None; link_type = "exe" }))
+                         {
+                           name;
+                           ext = [];
+                           command = None;
+                           link_type = "exe";
+                           has_runtime = false;
+                         }))
                    linker);
           ] )
     | x -> (builds, x)
@@ -58,7 +64,13 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                   (fun name ->
                     Config.Compiler_config.(
                       linker
-                        { name; ext = []; command = None; link_type = "exe" }))
+                        {
+                          name;
+                          ext = [];
+                          command = None;
+                          link_type = "exe";
+                          has_runtime = false;
+                        }))
                   linker
                 |> Option.value ~default:build.Build.linker;
             })
