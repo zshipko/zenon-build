@@ -138,7 +138,12 @@ let default_linkers =
   List.map
     (fun c ->
       Compiler_config.
-        { name = c.Linker.name; ext = []; command = None; link_type = "exe" })
+        {
+          name = c.Linker.name;
+          ext = [];
+          command = None;
+          link_type = Linker.string_of_link_type c.link_type;
+        })
     Linker.default
 
 module Tools = struct
@@ -183,11 +188,15 @@ let read_file path =
 let rec read_file_or_default path =
   if Eio.Path.is_file path then read_file path
   else if Eio.Path.is_directory path then
-    read_file_or_default Eio.Path.(path / "zenon.yaml")
+    let p =
+      if Eio.Path.is_file Eio.Path.(path / "zenon.yml") then
+        Eio.Path.(path / "zenon.yml")
+      else Eio.Path.(path / "zenon.yaml")
+    in
+    read_file_or_default p
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
-  (* Register custom compilers and linkers globally *)
   let () =
     List.iter
       (fun c -> Compiler.register @@ Compiler_config.compiler ~compilers:[] c)
@@ -199,11 +208,10 @@ let init ?mtime ~env path t =
       t.tools.linkers
   in
 
-  (* Parse .gitignore from the root path - returns Re.t list *)
   let gitignore_patterns =
     Util.parse_gitignore Eio.Path.(path / ".gitignore")
   in
-  (* Config ignore patterns are strings that need to be converted *)
+
   let config_ignore_patterns = List.map Util.glob_path t.ignore in
 
   List.filter_map
@@ -260,11 +268,11 @@ let init ?mtime ~env path t =
               { name = linker_name; ext = []; link_type; command = None }
         in
         let compiler_flags =
-          List.to_seq (t.flags @ config.flags)
-          |> Seq.map (fun v ->
-                 ( v.Build_config.Lang_flags.lang,
-                   Flags.v ~compile:v.compile ~link:v.link () ))
-          |> List.of_seq
+          List.map
+            (fun v ->
+              ( v.Build_config.Lang_flags.lang,
+                Flags.v ~compile:v.compile ~link:v.link () ))
+            (t.flags @ config.flags)
         in
         let source =
           match config.root with None -> path | Some p -> Eio.Path.(path / p)
@@ -282,7 +290,6 @@ let init ?mtime ~env path t =
           | None -> (
               match config.target with Some p -> p | None -> "default")
         in
-        (* Combine gitignore patterns (Re.t) with config ignore patterns (strings) *)
         let build_ignore_patterns = List.map Util.glob_path config.ignore in
         let all_ignore =
           gitignore_patterns @ config_ignore_patterns @ build_ignore_patterns

@@ -68,7 +68,6 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     flags = Option.value ~default:(Flags.v ()) flags;
     output;
     ignore;
-    (* Already Re.t list from config.ml *)
     name;
     compiler_flags;
     disable_cache;
@@ -108,7 +107,7 @@ let locate_files t patterns =
         List.filter_map
           (fun path ->
             let path_str = Eio.Path.native_exn path in
-            if Re.execp re path_str && not (Hashtbl.mem seen path_str) then (
+            if (not (Hashtbl.mem seen path_str)) && Re.execp re path_str then (
               Hashtbl.add seen path_str true;
               Some path)
             else None)

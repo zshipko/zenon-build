@@ -60,7 +60,7 @@ let ghc =
               | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
               | None -> None)
             sources
-          |> String_set.of_list |> String_set.to_list
+          |> List.sort_uniq String.compare
         in
         let hidir =
           match Eio.Path.split output.Object_file.path with
@@ -142,18 +142,13 @@ let compile_obj t mgr ~sources ~sw ~output ~build_mtime ?(verbose = false)
         (Eio.Path.native_exn output.Object_file.path);
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~sources ~flags ~output in
-      let logs_dir = Eio.Path.(build_dir / "logs") in
-      Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
-      let tmp_path =
-        Eio.Path.(
-          logs_dir / Digest.to_hex (Digest.string (String.concat " " cmd)))
-      in
-      let process =
-        Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
-        @@ fun log_file ->
+      Log_file.with_log_file ~keep:true ~build_dir
+        ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
+      @@ fun (tmp_path, log_file) ->
+      let proc =
         Eio.Process.spawn mgr cmd ~sw ~stdout:log_file ~stderr:log_file
       in
-      Some (process, tmp_path)
+      Some (tmp_path, proc)
 
 let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
 let all = ref default

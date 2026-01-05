@@ -11,6 +11,11 @@ let link_type_of_string s =
   | "static" | "archive" -> Static
   | other -> invalid_arg ("invalid link type: " ^ other)
 
+let string_of_link_type = function
+  | Executable -> "exe"
+  | Shared -> "shared"
+  | Static -> "static"
+
 type t = {
   name : string;
   link_type : link_type;
@@ -23,20 +28,13 @@ type t = {
 let link t mgr ~output ~objs ~flags ~build_dir =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
-  let logs_dir = Eio.Path.(build_dir / "logs") in
-  Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
-  let tmp_path =
-    Eio.Path.(logs_dir / Digest.to_hex (Digest.string (String.concat " " cmd)))
-  in
-  try
-    Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
-    @@ fun log_file ->
-    Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
-    Eio.Path.unlink tmp_path
+  Log_file.with_log_file ~build_dir
+    ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
+  @@ fun (tmp_path, log_file) ->
+  try Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file
   with exn ->
     (try
        let log = Eio.Path.load tmp_path in
-       Eio.Path.unlink tmp_path;
        Util.log_clear "❌ linker failed: %s\n%s" (String.concat " " cmd) log
      with _ -> ());
     raise exn

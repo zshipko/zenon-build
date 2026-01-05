@@ -76,6 +76,9 @@ let build t (b : Build.t) =
   G.add_vertex t.graph build_node;
   Option.iter (G.add_vertex t.graph) output_node;
   let ignore_regex = Re.compile (Re.alt b.ignore) in
+  let linker =
+    Linker.auto_select_linker ~sources:source_files ~linker:b.linker ()
+  in
   Eio.Fiber.List.iter
     (fun source_file ->
       if Re.execp ignore_regex (Eio.Path.native_exn source_file.path) then ()
@@ -129,7 +132,7 @@ let build t (b : Build.t) =
         Option.iter
           (fun node ->
             let edge_label =
-              match e with Some _ -> e | None -> Some (Linker b.linker)
+              match e with Some _ -> e | None -> Some (Linker linker)
             in
             G.add_edge_e t.graph @@ G.E.create obj_node edge_label node)
           output_node)
@@ -137,18 +140,12 @@ let build t (b : Build.t) =
 
 let run_script mgr ~build_dir s =
   let cmd = [ "sh"; "-c"; s ] in
-  let logs_dir = Eio.Path.(build_dir / "logs") in
-  Eio.Path.mkdirs ~exists_ok:true logs_dir ~perm:0o755;
-  let tmp_path = Eio.Path.(logs_dir / Digest.to_hex (Digest.string s)) in
-  try
-    Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp_path
-    @@ fun log_file ->
-    Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file;
-    Eio.Path.unlink tmp_path
+  Log_file.with_log_file ~build_dir ~name:(Digest.to_hex (Digest.string s))
+  @@ fun (tmp_path, log_file) ->
+  try Eio.Process.run mgr cmd ~stdout:log_file ~stderr:log_file
   with exn ->
     (try
        let log = Eio.Path.load tmp_path in
-       Eio.Path.unlink tmp_path;
        Util.log_clear "❌ script failed %s\n%s" s log
      with _ -> ());
     raise exn
@@ -221,14 +218,13 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                         ~build_dir:b.build combined_flags
                     in
                     (match task with
-                    | Some (process, log_path) -> (
+                    | Some (log_path, process) -> (
                         try
                           Eio.Process.await_exn process;
                           Eio.Path.unlink log_path (* Delete log on success *)
                         with exn ->
                           let log = Eio.Path.load log_path in
                           Eio.Path.unlink log_path;
-                          (* Delete log anyway *)
                           let cmd =
                             c.command ~sources ~flags:combined_flags ~output:obj
                           in
@@ -285,17 +281,18 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
         Eio.Process.run b.env#process_mgr
           (Eio.Path.native_exn exe :: execute_args)
 
+let build_map builds =
+  let build_map = Hashtbl.create (List.length builds) in
+  List.iter
+    (fun (build : Build.t) ->
+      if Hashtbl.mem build_map build.name then
+        Fmt.failwith "duplicate build name: %s" build.name;
+      Hashtbl.add build_map build.name build)
+    builds;
+  build_map
+
 let add_dependency_edges t builds =
-  let build_map =
-    List.fold_left
-      (fun acc (build : Build.t) ->
-        if Hashtbl.mem acc build.name then
-          Fmt.failwith "duplicate build name: %s" build.name;
-        Hashtbl.add acc build.name build;
-        acc)
-      (Hashtbl.create (List.length builds))
-      builds
-  in
+  let build_map = build_map builds in
   List.iter
     (fun build ->
       List.iter
@@ -312,50 +309,28 @@ let add_dependency_edges t builds =
     builds
 
 let run_all ?execute ?args ?(log_level = `Debug) t builds =
-  let build_map =
-    List.fold_left
-      (fun acc (build : Build.t) ->
-        if Hashtbl.mem acc build.name then
-          Fmt.failwith "duplicate build name: %s" build.name;
-        Hashtbl.add acc build.name build;
-        acc)
-      (Hashtbl.create (List.length builds))
-      builds
-  in
-
-  Eio.Fiber.List.iter
-    (fun build ->
-      List.iter
-        (fun dep_name ->
-          match Hashtbl.find_opt build_map dep_name with
-          | Some dep_build ->
-              (* Edge from dependency to dependent: dep_build -> build *)
-              G.add_edge_e t.graph
-              @@ G.E.create (Build dep_build) (Some Dependency) (Build build)
-          | None ->
-              Fmt.failwith "build '%s' depends on unknown build '%s'" build.name
-                dep_name)
-        build.depends_on)
-    builds;
+  add_dependency_edges t builds;
 
   (* Check command availability before building *)
-  if not (List.is_empty builds) then (
-    let env = (List.hd builds).env in
-    let checker = Command.v env#process_mgr in
-    let required_commands = ref String_set.empty in
-    List.iter
-      (fun (build : Build.t) ->
-        Hashtbl.iter
-          (fun _ compiler ->
-            let cmd = compiler.Compiler.name in
-            required_commands := String_set.add cmd !required_commands)
-          build.compiler_index;
-        let linker_cmd = build.linker.name in
-        required_commands := String_set.add linker_cmd !required_commands)
-      builds;
-    Command.check_commands checker (String_set.to_list !required_commands));
+  (if not (List.is_empty builds) then
+     let env = (List.hd builds).env in
+     let checker = Command.v env#process_mgr in
+     let required_commands =
+       List.fold_left
+         (fun acc (build : Build.t) ->
+           let acc =
+             Hashtbl.fold
+               (fun _ compiler acc ->
+                 let cmd = compiler.Compiler.name in
+                 String_set.add cmd acc)
+               build.compiler_index acc
+           in
+           let linker_cmd = build.linker.name in
+           String_set.add linker_cmd acc)
+         String_set.empty builds
+     in
+     Command.check_commands checker (String_set.to_list required_commands));
 
-  (* Add build dependency edges to the existing graph *)
   let ndeps = Hashtbl.create (List.length builds) in
   List.iter
     (fun (build : Build.t) ->
