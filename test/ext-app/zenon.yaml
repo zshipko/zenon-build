@@ -1,0 +1,14 @@
+build:
+  - name: myapp
+    target: myapp
+    files:
+      - '*.c'
+    depends-on:
+      - ../ext-lib:utils
+    flags:
+      - lang: c
+        compile:
+          - -I../ext-lib
+        link:
+          - -L../ext-lib
+          - -lutils

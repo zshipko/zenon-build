@@ -1,0 +1,15 @@
+# Test circular dependency detection
+build:
+  - name: target-a
+    target: a.out
+    files:
+      - '*.c'
+    depends-on:
+      - target-b
+
+  - name: target-b
+    target: b.out
+    files:
+      - '*.c'
+    depends-on:
+      - target-a

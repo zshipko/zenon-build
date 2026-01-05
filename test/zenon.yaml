@@ -1,0 +1,108 @@
+# Test configuration for Zenon build system
+# Tests various languages, build types, and features
+
+# Global flags applied to all builds
+flags:
+  - lang: c
+    compile:
+      - -Wall
+      - -Wextra
+      - -O2
+  - lang: c++
+    compile:
+      - -Wall
+      - -std=c++17
+
+build:
+  # Test 1: Simple C executable
+  - name: simple-c
+    root: simple-c
+    target: simple-c/run
+    files:
+      - '*.c'
+    headers:
+      - '*.h'
+
+  # Test 2: C static library
+  - name: mylib-static
+    root: mylib
+    target: libmylib.a
+    files:
+      - lib.c
+    headers:
+      - '*.h'
+
+  # Test 3: C shared library
+  - name: mylib-shared
+    root: mylib
+    target: libmylib.so
+    files:
+      - '*.c'
+    headers:
+      - '*.h'
+
+  # Test 4: Executable that depends on library
+  - name: use-mylib
+    root: use-mylib
+    target: use-mylib/run
+    files:
+      - '*.c'
+    depends-on:
+      - mylib-static
+      - ..:say-hi
+      - ..:hello2
+      # - ..:libtest1.a
+    flags:
+      - lang: c
+        compile:
+          - -Imylib
+        link:
+          - -L.
+          - -lmylib
+
+  # Test 5: C++ executable
+  - name: simple-cpp
+    root: simple-cpp
+    target: simple-cpp/run
+    files:
+      - '*.cpp'
+    headers:
+      - '*.hpp'
+
+  # Test 6: Haskell executable
+  - name: simple-hs
+    root: simple-hs
+    target: simple-hs/run
+    parallel: false
+    files:
+      - 'Lib.hs'
+      - 'Main.hs'
+
+  # Test 7: Standard ML executable
+  - name: simple-sml
+    root: simple-sml
+    target: simple-sml/run
+    files:
+      - '*.sml'
+
+  # Test 8: ATS2 executable
+  - name: simple-ats
+    root: simple-ats
+    target: simple-ats/run
+    files:
+      - '*.dats'
+
+  # Test 9: Multi-language build (C + assembly)
+  - name: multi-lang
+    root: multi-lang
+    target: multi-lang/run
+    files:
+      - '*.c'
+      - '*.s'
+
+  # Test 10: Parallel compilation test
+  - name: parallel-test
+    root: parallel-test
+    target: parallel-test/run
+    files:
+      - '*.c'

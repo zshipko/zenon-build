@@ -1,0 +1,7 @@
+build:
+  - name: utils
+    target: libutils.a
+    files:
+      - '*.c'
+    headers:
+      - '*.h'
