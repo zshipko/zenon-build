@@ -157,7 +157,7 @@ build:
 ### Top-level fields
 
 - `build` - List of build targets (required)
-- `files` - Source files to include in all targets
+- `files` - Source files to include in all targets 
 - `flags` - Compiler/linker flags for all targets
 - `tools` - Custom compiler and linker configurations
 - `ignore` - File patterns to exclude from all targets
@@ -180,6 +180,9 @@ build:
 - `disable_cache` - Rebuild every time
 - `flags` - Compiler/linker flags for this target
 - `compilers` - List of compiler names to use (e.g., `[clang, clang++]`)
+
+Note: For some languages (like OCaml and Haskell) the `files` will need to be manually ordered for dependency
+resolution if you're using multiple files.
 
 ### Flag configuration
 
