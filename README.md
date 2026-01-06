@@ -3,9 +3,8 @@
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
 Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](https://clang.llvm.org/), [flang](https://flang.llvm.org/docs/),
-[ispc](https://ispc.github.io/), [ocaml](https://ocaml.org), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [ats2](http://www.ats-lang.org).
-
-Additional compilers can be configured in the `zenon.yaml` file. 
+[ispc](https://ispc.github.io/), [ocaml](https://ocaml.org), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [ats2](http://www.ats-lang.org)
+and additional compilers can be specified in the `zenon.yaml` file. 
 
 ## Installation
 
