@@ -116,7 +116,43 @@ let ghc =
         let objs =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
-        [ "ghc"; "-v0"; "-o"; Eio.Path.native_exn output ]
+        [
+          "ghc";
+          "-v0";
+          "-fdiagnostics-color=always";
+          "-o";
+          Eio.Path.native_exn output;
+        ]
+        @ include_paths @ flags.Flags.link @ objs);
+    link_type = Executable;
+  }
+
+let ocaml =
+  {
+    name = "ocamlfind";
+    exts = Compiler.ocaml.ext;
+    has_runtime = true;
+    command =
+      (fun ~flags ~objs ~output ->
+        let include_paths =
+          List.concat_map
+            (fun x ->
+              match Eio.Path.split x.path with
+              | Some (parent, _) -> [ "-I"; Eio.Path.native_exn @@ parent ]
+              | None -> [])
+            objs
+        in
+        let objs =
+          List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+        in
+        [
+          "ocamlfind";
+          "ocamlopt";
+          "-color=always";
+          "-linkall";
+          "-o";
+          Eio.Path.native_exn output;
+        ]
         @ include_paths @ flags.Flags.link @ objs);
     link_type = Executable;
   }
@@ -156,7 +192,18 @@ let flang =
   }
 
 let default =
-  [ clang; clang_shared; clangxx; clangxx_shared; ar; ghc; mlton; ats2; flang ]
+  [
+    clang;
+    clang_shared;
+    clangxx;
+    clangxx_shared;
+    ar;
+    ghc;
+    mlton;
+    ats2;
+    flang;
+    ocaml;
+  ]
 
 let all = ref default
 
@@ -182,6 +229,7 @@ let find_by_name linkers l =
       | "flang-new" | "flang" | "fortran" -> Some flang
       | "sml" | "mlton" -> Some mlton
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
+      | "ocaml" | "ml" | "ocamlfind" | "ocamlopt" -> Some ocaml
       | _ -> None)
 
 let match_linker ~target ~source_exts linkers =

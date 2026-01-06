@@ -3,7 +3,7 @@
 An experimental build system and script runner for languages and compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
 Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](https://clang.llvm.org/), [flang](https://flang.llvm.org/docs/),
-[ispc](https://ispc.github.io/), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [patscc](http://www.ats-lang.org).
+[ispc](https://ispc.github.io/), [ocaml](https://ocaml.org), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [ats2](http://www.ats-lang.org).
 
 Additional compilers can be configured in the `zenon.yaml` file. 
 
@@ -221,4 +221,7 @@ In the example above, `#objs`, `#flags` and `#output` are template arguments and
 - `ext` - File extensions this compiler handles
 - `command` - Command template (`#flags`, `#output`, `#objs` are substituted)
 - `link-type` - Specifies the type of linker (should only be set when defining linkers)
+- `has-runtime` - For linkers, specifies if the language links a runtime. If it does then this linker must be used if any matching
+  source files are present
+- `parallel` - For compilers, specified whether parallel builds are allowed
 

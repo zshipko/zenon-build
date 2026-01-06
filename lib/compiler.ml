@@ -7,6 +7,8 @@ type t = {
     objects:Object_file.t list ->
     output:Object_file.t ->
     string list;
+  transform_output : Object_file.t -> Object_file.t;
+  parallel : bool;
   ext : String_set.t;
 }
 
@@ -17,11 +19,15 @@ let c_like ?(force_color = "-fcolor-diagnostics") cc =
   @ flags.Flags.compile
   @ [ Eio.Path.native_exn output.source.path ]
 
+let transform_output obj = obj
+
 let clang =
   {
     name = "clang";
     command = c_like [ "clang" ];
     ext = String_set.of_list [ "c"; "s"; "ll"; "bc" ];
+    transform_output;
+    parallel = true;
   }
 
 let clangxx =
@@ -29,6 +35,8 @@ let clangxx =
     name = "clang++";
     command = c_like [ "clang++" ];
     ext = String_set.of_list [ "cc"; "cpp"; "cxx" ];
+    transform_output;
+    parallel = true;
   }
 
 let ispc =
@@ -46,6 +54,8 @@ let ispc =
         @ flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);
     ext = String_set.of_list [ "ispc" ];
+    transform_output;
+    parallel = true;
   }
 
 let ghc =
@@ -55,15 +65,15 @@ let ghc =
       (fun ~flags ~objects ~output ->
         let hidir =
           match Eio.Path.split output.Object_file.path with
-          | None -> assert false
+          | None -> []
           | Some (p, _) -> [ "-hidir"; Eio.Path.native_exn p ]
         in
         let include_paths =
-          List.map
+          List.filter_map
             (fun obj ->
-              match Eio.Path.split obj.Object_file.source.path with
-              | None -> assert false
-              | Some (p, _) -> "-i" ^ Eio.Path.native_exn p)
+              match Eio.Path.split obj.Object_file.path with
+              | None -> None
+              | Some (p, _) -> Some ("-i" ^ Eio.Path.native_exn p))
             objects
         in
         [
@@ -77,6 +87,42 @@ let ghc =
         @ hidir @ include_paths @ flags.Flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);
     ext = String_set.of_list [ "hs"; "lhs" ];
+    transform_output;
+    parallel = false;
+  }
+
+let ocaml =
+  {
+    name = "ocamlfind";
+    command =
+      (fun ~flags ~objects ~output ->
+        let include_paths =
+          List.concat_map
+            (fun obj ->
+              match Eio.Path.split obj.Object_file.path with
+              | None -> []
+              | Some (p, _) -> [ "-I"; Eio.Path.native_exn p ])
+            objects
+        in
+        [
+          "ocamlfind";
+          "ocamlopt";
+          "-color=always";
+          "-c";
+          "-o";
+          Eio.Path.native_exn output.Object_file.path;
+        ]
+        @ include_paths @ flags.Flags.compile
+        @ [ Eio.Path.native_exn output.source.path ]);
+    ext = String_set.of_list [ "ml" ];
+    transform_output =
+      (fun obj ->
+        let p, s = obj.path in
+        let dest =
+          (Filename.chop_extension @@ Filename.chop_extension @@ s) ^ ".o"
+        in
+        { obj with path = (p, dest) });
+    parallel = false;
   }
 
 let mlton =
@@ -104,6 +150,8 @@ let mlton =
               out out out out out;
         ]);
     ext = String_set.of_list [ "sml"; "mlb" ];
+    transform_output;
+    parallel = true;
   }
 
 let ats2 =
@@ -111,6 +159,8 @@ let ats2 =
     name = "patscc";
     command = c_like [ "patscc"; "-Wno-unused-command-line-argument" ];
     ext = String_set.of_list [ "dats"; "pats" ];
+    transform_output;
+    parallel = true;
   }
 
 let flang =
@@ -118,7 +168,12 @@ let flang =
     name = "flang-new";
     command = c_like [ "flang-new" ];
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
+    transform_output;
+    parallel = true;
   }
+
+let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang; ocaml ]
+let all = ref default
 
 let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
     flags =
@@ -153,9 +208,6 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
       in
       Some (tmp_path, proc)
 
-let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang ]
-let all = ref default
-
 let register compiler =
   if not (List.exists (fun c -> c.name = compiler.name) !all) then
     all := compiler :: !all
@@ -174,6 +226,7 @@ let find_by_name ?compilers c =
       | "flang-new" | "flang" | "fortran" -> Some flang
       | "sml" | "mlton" -> Some mlton
       | "ats" | "ats2" | "pats" | "patscc" -> Some ats2
+      | "ocaml" | "ml" | "ocamlopt" | "ocamlfind" -> Some ocaml
       | _ -> None)
 
 module Set = struct

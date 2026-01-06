@@ -27,6 +27,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                            command = None;
                            link_type = "exe";
                            has_runtime = false;
+                           parallel = true;
                          }))
                    linker);
           ] )
@@ -61,16 +62,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
               output;
               linker =
                 Option.map
-                  (fun name ->
-                    Config.Compiler_config.(
-                      linker
-                        {
-                          name;
-                          ext = [];
-                          command = None;
-                          link_type = "exe";
-                          has_runtime = false;
-                        }))
+                  (fun l -> Config.Compiler_config.(linker @@ named l))
                   linker
                 |> Option.value ~default:build.Build.linker;
             })

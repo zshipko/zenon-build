@@ -10,8 +10,19 @@ module Compiler_config = struct
     command : string list option; [@default None]
     link_type : string; [@key "link-type"] [@default "exe"]
     has_runtime : bool; [@key "has-runtime"] [@default false]
+    parallel : bool; [@default true]
   }
   [@@deriving yaml]
+
+  let named name =
+    {
+      name;
+      ext = [];
+      command = None;
+      link_type = "exe";
+      has_runtime = false;
+      parallel = true;
+    }
 
   let compiler ?compilers t =
     match t.command with
@@ -29,6 +40,8 @@ module Compiler_config = struct
                     else if String.equal x "#flags" then acc @ flags.compile
                     else acc @ [ x ])
                   [] cmd);
+            transform_output = Fun.id;
+            parallel = t.parallel;
           }
     | None -> (
         match Compiler.find_by_name ?compilers t.name with
@@ -129,30 +142,10 @@ module Build_config = struct
 end
 
 let default_compilers =
-  List.map
-    (fun c ->
-      Compiler_config.
-        {
-          name = c.Compiler.name;
-          ext = [];
-          command = None;
-          link_type = "exe";
-          has_runtime = false;
-        })
-    Compiler.default
+  List.map (fun c -> Compiler_config.named c.Compiler.name) Compiler.default
 
 let default_linkers =
-  List.map
-    (fun c ->
-      Compiler_config.
-        {
-          name = c.Linker.name;
-          ext = [];
-          command = None;
-          link_type = Linker.string_of_link_type c.link_type;
-          has_runtime = c.has_runtime;
-        })
-    Linker.default
+  List.map (fun c -> Compiler_config.named c.Linker.name) Linker.default
 
 module Tools = struct
   type t = {
@@ -272,14 +265,7 @@ let init ?mtime ~env path t =
         in
         let linker =
           Compiler_config.linker
-            Compiler_config.
-              {
-                name = linker_name;
-                ext = [];
-                link_type;
-                command = None;
-                has_runtime = false;
-              }
+          @@ { (Compiler_config.named linker_name) with link_type }
         in
         let compiler_flags =
           List.map
