@@ -184,8 +184,16 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
           Eio.Path.stat ~follow:true output.source.path )
     with _ -> None
   in
-  let src_path = Util.truncate_path_left output.source.path in
-  let obj_path = Util.truncate_path_left output.Object_file.path in
+  let src_path =
+    if not (Util.is_verbose log_level) then
+      Util.truncate_path_left output.source.path
+    else Eio.Path.native_exn output.source.path
+  in
+  let obj_path =
+    if not (Util.is_verbose log_level) then
+      Util.truncate_path_left output.Object_file.path
+    else Eio.Path.native_exn output.path
+  in
   match st with
   | Some (obj, src) when obj.mtime > src.mtime && obj.mtime > build_mtime ->
       Util.log_spinner
