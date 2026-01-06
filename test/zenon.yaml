@@ -82,7 +82,7 @@ build:
     root: simple-sml
     target: simple-sml/run
     files:
-      - '*.sml'
+      - '*.mlb'
 
   # Test 8: ATS2 executable
   - name: simple-ats
@@ -90,6 +90,7 @@ build:
     target: simple-ats/run
     files:
       - '*.dats'
+      - '*.sats'
 
   # Test 9: Multi-language build (C + assembly)
   - name: multi-lang
