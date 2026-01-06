@@ -96,8 +96,8 @@ build:
     root: multi-lang
     target: multi-lang/run
     files:
-      - '*.c'
       - '*.s'
+      - '*.c'
 
   # Test 10: Parallel compilation test
   - name: parallel-test

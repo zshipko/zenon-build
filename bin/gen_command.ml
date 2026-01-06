@@ -46,6 +46,48 @@ let graph ~path ~builds ?output () =
 
 type compile_db_format = CompileCommands | CompileFlags
 
+let gitignore ~path ~builds ?output () =
+  Eio_posix.run @@ fun env ->
+  let x = load_config env path in
+  let builds = filter_builds x builds in
+  let build_map = make_build_map x in
+  let builds_with_deps_set = builds_with_deps build_map builds in
+  let targets =
+    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x
+  in
+
+  let entries =
+    List.fold_left
+      (fun acc (b : Build.t) ->
+        match b.output with
+        | None -> acc
+        | Some output ->
+            let output_path = Eio.Path.native_exn output in
+            (* Make path relative to cwd *)
+            let cwd = Eio.Path.native_exn env#cwd in
+            let rel_output =
+              if String.starts_with ~prefix:cwd output_path then
+                let prefix_len = String.length cwd in
+                String.sub output_path (prefix_len + 1)
+                  (String.length output_path - prefix_len - 1)
+              else output_path
+            in
+            String_set.add rel_output acc)
+      String_set.empty targets
+  in
+
+  let contents =
+    String_set.to_list entries |> List.sort String.compare |> String.concat "\n"
+    |> fun s -> s ^ "\n"
+  in
+
+  match output with
+  | Some path ->
+      Eio.Path.save ~create:(`Or_truncate 0o644)
+        Eio.Path.(env#cwd / path)
+        contents
+  | None -> print_string contents
+
 let compile_commands ~path ~builds ~format ?output () =
   Eio_posix.run @@ fun env ->
   let x = load_config env path in

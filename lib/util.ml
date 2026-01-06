@@ -8,7 +8,6 @@ let log_level = function 0 -> `Quiet | 1 -> `Info | _ -> `Debug
 let is_verbose = function `Quiet -> false | `Info | `Debug -> true
 let is_debug = function `Debug -> true | _ -> false
 
-(* Progress bar state for non-verbose mode *)
 type progress_state = {
   mutable current : int;
   total : int;
@@ -16,22 +15,22 @@ type progress_state = {
   mutable current_file : string;
 }
 
-let progress : progress_state option ref = ref None
+let progress : progress_state option Atomic.t = Atomic.make None
 
 let init_progress total =
   if Unix.isatty Unix.stderr && total > 0 then
-    progress := Some { current = 0; total; is_tty = true; current_file = "" }
+    Atomic.set progress
+      (Some { current = 0; total; is_tty = true; current_file = "" })
 
 let finalize_progress () =
-  match !progress with
+  match Atomic.exchange progress None with
   | Some p when p.is_tty ->
       (* Clear the progress line *)
-      Fmt.epr "\r\027[K%!";
-      progress := None
-  | _ -> progress := None
+      Fmt.epr "\r\027[K%!"
+  | _ -> ()
 
 let clear_progress_bar () =
-  match !progress with
+  match Atomic.get progress with
   | Some p when p.is_tty ->
       (* Clear current line *)
       Fmt.epr "\r\027[K%!";
@@ -69,7 +68,7 @@ let truncate_path_left ?max_len s =
   truncate_left ?max_len s
 
 let redraw_progress_bar () =
-  match !progress with
+  match Atomic.get progress with
   | Some p when p.is_tty && p.current < p.total && p.current > 0 ->
       (* Don't redraw if we're at 100% or haven't started - it will be finalized soon *)
       let frame =
@@ -130,7 +129,7 @@ let log_spinner ?(verbose = true) fmt =
     Fmt.kstr
       (fun msg ->
         Mutex.protect lock @@ fun () ->
-        match !progress with
+        match Atomic.get progress with
         | Some p ->
             p.current <- p.current + 1;
             p.current_file <- msg;
@@ -194,11 +193,8 @@ let glob =
   Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
     ~expand_braces:true
 
-let glob_path path = glob (Filename.concat "**" path)
-
-let gitignore_to_glob pattern =
-  (* gitignore patterns should not get **/ prefix if they contain / *)
-  if String.contains pattern '/' then glob pattern else glob_path pattern
+let glob_path path =
+  glob @@ Printf.sprintf "{%s,%s}" path @@ Filename.concat "**" path
 
 let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
@@ -237,7 +233,7 @@ let parse_gitignore path =
               String.sub line 1 (String.length line - 1)
             else line
           in
-          Some (gitignore_to_glob pattern))
+          Some (glob_path pattern))
       lines
     |> List.of_seq
   else []

@@ -109,6 +109,12 @@ let cmd_gen_compile_flags =
   Gen_command.compile_commands ~path ~builds ~format:Gen_command.CompileFlags
     ?output ()
 
+let cmd_gen_gitignore =
+  Cmd.v (Cmd.info "gitignore" ~doc:"Generate .gitignore with build outputs")
+  @@
+  let+ builds = targets and+ path = path and+ output = output in
+  Gen_command.gitignore ~path ~builds ?output ()
+
 let cmd_gen =
   Cmd.group
     (Cmd.info "gen" ~doc:"Generate files")
@@ -117,6 +123,7 @@ let cmd_gen =
       cmd_gen_compile_flags;
       cmd_gen_pkg_config;
       cmd_gen_graph;
+      cmd_gen_gitignore;
     ]
 
 let cmd_install =

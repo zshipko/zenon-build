@@ -189,11 +189,9 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   in
   let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
 
-  let visited_flags = Hashtbl.create 8 in
-
   let start = Unix.gettimeofday () in
+  let visited_flags = Hashtbl.create 8 in
   let objects = ref [] in
-
   let do_parallel = ref b.parallel in
 
   Eio.Switch.run @@ fun sw ->
@@ -202,7 +200,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
       (fun (v', obj) ->
         let obj_node = Obj obj in
         match G.find_edge t.graph v' obj_node |> G.E.label with
-        | None -> fun () -> None
+        | None -> fun () -> ()
         | Some edge' -> (
             match edge' with
             | Compiler (c, flags) ->
@@ -243,7 +241,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                               ~target:b.name ~command:(String.concat " " cmd)
                               ~exn ();
                             raise (Build_failed b.name))
-                      | None -> ());
+                      | None -> objects := obj :: !objects);
                       if not (Hashtbl.mem visited_flags key) then
                         let () = Hashtbl.add visited_flags key true in
                         link_flags := Flags.concat !link_flags flags
@@ -262,14 +260,16 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                           ~command:(String.concat " " cmd) ~exn ();
                         raise (Build_failed b.name)
                   in
-                  Some obj
-            | _ -> fun () -> None))
+                  ()
+            | _ -> fun () -> ()))
       objs
   in
-  let objs =
-    if !do_parallel then Eio.Fiber.n_any objs |> List.filter_map Fun.id
-    else List.filter_map (fun f -> f ()) objs
+  let () =
+    if List.is_empty objs then ()
+    else if !do_parallel then Eio.Fiber.all objs
+    else List.iter (fun f -> f ()) objs
   in
+  let objs = !objects in
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);

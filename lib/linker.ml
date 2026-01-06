@@ -148,6 +148,8 @@ let ocaml =
         [
           "ocamlfind";
           "ocamlopt";
+          "-I";
+          "+unix";
           "-color=always";
           "-linkall";
           "-o";

@@ -78,18 +78,19 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
 let special_dirs = String_set.of_list [ "zenon-build"; ".git"; ".jj" ]
 let is_special_dir name = String_set.mem name special_dirs
 
-let rec collect_all count check_ignore path =
+let rec collect_all count check_ignore root path =
   let entries = Eio.Path.read_dir path in
-  Seq.concat_map
+  List.concat_map
     (fun name ->
       incr count;
       let full_path = Eio.Path.(path / name) in
       if Eio.Path.is_directory full_path then
-        if check_ignore name && not (is_special_dir name) then
-          collect_all count check_ignore full_path
-        else Seq.empty
-      else Seq.return full_path)
-    (List.to_seq entries)
+        let rel_path = Util.relative_to root full_path in
+        if (not (is_special_dir name)) && check_ignore rel_path then
+          collect_all count check_ignore root full_path
+        else []
+      else [ full_path ])
+    entries
 
 let locate_files t = function
   | [] -> []
@@ -99,21 +100,21 @@ let locate_files t = function
         match t.ignore with [] -> true | _ -> not (Re.execp ignore f)
       in
       let count = ref 0 in
-      let all_files = collect_all count check_ignore t.source in
+      let all_files = collect_all count check_ignore t.source t.source in
       let seen = Hashtbl.create !count in
-      Seq.concat_map
+      List.concat_map
         (fun pattern ->
           let re = Re.compile pattern in
-          Seq.filter_map
+          List.filter_map
             (fun path ->
               let path_str = Eio.Path.native_exn path in
-              if (not (Hashtbl.mem seen path_str)) && Re.execp re path_str then (
+              let rel_path = Util.relative_to t.source path in
+              if (not (Hashtbl.mem seen path_str)) && Re.execp re rel_path then (
                 Hashtbl.add seen path_str true;
                 Some path)
               else None)
             all_files)
-        (List.to_seq patterns)
-      |> List.of_seq
+        patterns
 
 let locate_source_files t : Source_file.t list =
   locate_files t t.files

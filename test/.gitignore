@@ -1,0 +1,12 @@
+libmylib.a
+libmylib.dylib
+multi-lang/run
+parallel-test/run
+simple-ats/run
+simple-c/run
+simple-cpp/run
+simple-hs/run
+simple-ml/run
+simple-sml/run
+use-mylib/run
+zenon-build/
