@@ -121,7 +121,7 @@ let ocaml =
       (fun obj ->
         let p, s = obj.path in
         let dest =
-          (Filename.chop_extension @@ Filename.chop_extension @@ s) ^ ".o"
+          (Filename.chop_extension @@ Filename.chop_extension @@ s) ^ ".cmx"
         in
         { obj with path = (p, dest) });
     parallel = false;

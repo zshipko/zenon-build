@@ -191,7 +191,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
 
   let start = Unix.gettimeofday () in
   let visited_flags = Hashtbl.create 8 in
-  let objects = ref [] in
+  let visited_objects = ref [] in
   let do_parallel = ref b.parallel in
 
   Eio.Switch.run @@ fun sw ->
@@ -200,76 +200,82 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
       (fun (v', obj) ->
         let obj_node = Obj obj in
         match G.find_edge t.graph v' obj_node |> G.E.label with
-        | None -> fun () -> ()
+        | None -> None
         | Some edge' -> (
             match edge' with
             | Compiler (c, flags) ->
                 incr count;
                 do_parallel := !do_parallel && c.parallel;
-                fun () ->
-                  let obj = c.transform_output obj in
-                  let flags = Option.value ~default:(Flags.v ()) flags in
-                  let () =
-                    let combined_flags = Flags.concat b_flags flags in
-                    let key =
-                      Digest.to_hex @@ Digest.string @@ c.name
-                      ^ String.concat "_" flags.link
-                      ^ String.concat "_" flags.compile
-                    in
-                    try
-                      let task =
-                        Compiler.compile_obj c ~output:obj ~sw ~log_level
-                          ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
-                          ~objects:!objects combined_flags
-                      in
-                      (match task with
-                      | Some (log_path, process) -> (
-                          try
-                            Eio.Process.await_exn process;
-                            objects := obj :: !objects;
-                            Eio.Path.unlink log_path (* Delete log on success *)
-                          with exn ->
-                            let log = Log_file.get ~unlink:true log_path in
-                            let cmd =
-                              c.command ~flags:combined_flags ~output:obj
-                                ~objects:!objects
-                            in
-                            let filepath =
-                              Util.relative_to b.source obj.source.path
-                            in
-                            Util.log_error ~log_output:log ~filepath
-                              ~target:b.name ~command:(String.concat " " cmd)
-                              ~exn ();
-                            raise (Build_failed b.name))
-                      | None -> objects := obj :: !objects);
-                      if not (Hashtbl.mem visited_flags key) then
-                        let () = Hashtbl.add visited_flags key true in
-                        link_flags := Flags.concat !link_flags flags
-                    with
-                    | Build_failed _ as e -> raise e
-                    | Eio.Cancel.Cancelled _ as e -> raise e
-                    | exn ->
-                        let cmd =
-                          c.command ~flags:combined_flags ~output:obj
-                            ~objects:!objects
-                        in
-                        let filepath =
-                          Util.relative_to b.source obj.source.path
-                        in
-                        Util.log_error ~log_output:"" ~filepath ~target:b.name
-                          ~command:(String.concat " " cmd) ~exn ();
-                        raise (Build_failed b.name)
-                  in
-                  ()
-            | _ -> fun () -> ()))
+                let obj = c.transform_output obj in
+                Option.some
+                @@ ( obj,
+                     fun () ->
+                       let flags = Option.value ~default:(Flags.v ()) flags in
+                       let () =
+                         let combined_flags = Flags.concat b_flags flags in
+                         let key =
+                           Digest.to_hex @@ Digest.string @@ c.name
+                           ^ String.concat "_" flags.link
+                           ^ String.concat "_" flags.compile
+                         in
+                         try
+                           let task =
+                             Compiler.compile_obj c ~output:obj ~sw ~log_level
+                               ~build_dir:b.build ~build_mtime:b.mtime
+                               ~env:b.env ~objects:!visited_objects
+                               combined_flags
+                           in
+                           (match task with
+                           | Some (log_path, process) -> (
+                               try
+                                 Eio.Process.await_exn process;
+                                 visited_objects := !visited_objects @ [ obj ];
+                                 Eio.Path.unlink
+                                   log_path (* Delete log on success *)
+                               with exn ->
+                                 let log = Log_file.get ~unlink:true log_path in
+                                 let cmd =
+                                   c.command ~flags:combined_flags ~output:obj
+                                     ~objects:!visited_objects
+                                 in
+                                 let filepath =
+                                   Util.relative_to b.source obj.source.path
+                                 in
+                                 Util.log_error ~log_output:log ~filepath
+                                   ~target:b.name
+                                   ~command:(String.concat " " cmd) ~exn ();
+                                 raise (Build_failed b.name))
+                           | None ->
+                               visited_objects := !visited_objects @ [ obj ]);
+                           if not (Hashtbl.mem visited_flags key) then
+                             let () = Hashtbl.add visited_flags key true in
+                             link_flags := Flags.concat !link_flags flags
+                         with
+                         | Build_failed _ as e -> raise e
+                         | Eio.Cancel.Cancelled _ as e -> raise e
+                         | exn ->
+                             let cmd =
+                               c.command ~flags:combined_flags ~output:obj
+                                 ~objects:!visited_objects
+                             in
+                             let filepath =
+                               Util.relative_to b.source obj.source.path
+                             in
+                             Util.log_error ~log_output:"" ~filepath
+                               ~target:b.name ~command:(String.concat " " cmd)
+                               ~exn ();
+                             raise (Build_failed b.name)
+                       in
+                       () )
+            | _ -> None))
       objs
   in
+  let objs, tasks = List.filter_map Fun.id objs |> List.split in
   let () =
-    if List.is_empty objs then ()
-    else if !do_parallel then Eio.Fiber.all objs
-    else List.iter (fun f -> f ()) objs
+    if List.is_empty tasks then ()
+    else if !do_parallel then Eio.Fiber.all tasks
+    else List.iter (fun f -> f ()) tasks
   in
-  let objs = !objects in
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
