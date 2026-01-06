@@ -186,15 +186,34 @@ let read_file path =
     Result.map (fun y -> (y, st.Eio.File.Stat.mtime)) @@ of_yaml y
   with exn -> Error (`Msg (Printexc.to_string exn))
 
-let rec read_file_or_default path =
+(* Search for config file in current directory and parent directories *)
+let rec find_config_in_parents path =
+  let yml_path = Eio.Path.(path / "zenon.yml") in
+  let yaml_path = Eio.Path.(path / "zenon.yaml") in
+
+  if Eio.Path.is_file yml_path then Some yml_path
+  else if Eio.Path.is_file yaml_path then Some yaml_path
+  else
+    (* Get parent directory *)
+    let native = Eio.Path.native_exn path in
+    let parent = Filename.dirname native in
+    (* Stop if we've reached the root directory *)
+    if
+      String.equal parent native || String.equal parent "/"
+      || String.equal parent "." || String.equal parent ""
+    then None
+    else
+      (* Search in parent *)
+      match Eio.Path.split path with
+      | None -> None
+      | Some (parent_path, _) -> find_config_in_parents parent_path
+
+let read_file_or_default path =
   if Eio.Path.is_file path then read_file path
   else if Eio.Path.is_directory path then
-    let p =
-      if Eio.Path.is_file Eio.Path.(path / "zenon.yml") then
-        Eio.Path.(path / "zenon.yml")
-      else Eio.Path.(path / "zenon.yaml")
-    in
-    read_file_or_default p
+    match find_config_in_parents path with
+    | Some config_path -> read_file config_path
+    | None -> Ok (empty, Unix.gettimeofday ())
   else Ok (empty, Unix.gettimeofday ())
 
 let init ?mtime ~env path t =
@@ -306,14 +325,11 @@ let init ?mtime ~env path t =
     t.build
 
 let load ~env path =
+  let project_root =
+    if Eio.Path.is_directory path then path
+    else
+      match Eio.Path.split path with None -> assert false | Some (p, _) -> p
+  in
   match read_file_or_default path with
-  | Ok (config, mtime) ->
-      let path =
-        if Eio.Path.is_directory path then path
-        else
-          match Eio.Path.split path with
-          | None -> assert false
-          | Some (p, _) -> p
-      in
-      Ok (init ~mtime ~env path config)
+  | Ok (config, mtime) -> Ok (init ~mtime ~env project_root config)
   | Error e -> Error e

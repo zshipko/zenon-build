@@ -13,8 +13,29 @@ let rec collect_dependencies build_map name visited =
 
 let load_config env path =
   let normalized_path = Unix.realpath path in
-  Sys.chdir normalized_path;
-  match Config.load ~env Eio.Path.(env#fs / normalized_path) with
+  let eio_path = Eio.Path.(env#fs / normalized_path) in
+
+  (* Find the directory containing the config file by searching upwards *)
+  let dir_path =
+    if Eio.Path.is_directory eio_path then eio_path
+    else
+      match Eio.Path.split eio_path with
+      | None -> eio_path
+      | Some (p, _) -> p
+  in
+
+  let project_root =
+    match Config.find_config_in_parents dir_path with
+    | Some config_path -> (
+        match Eio.Path.split config_path with
+        | None -> normalized_path
+        | Some (dir, _) -> Eio.Path.native_exn dir)
+    | None -> normalized_path
+  in
+
+  Sys.chdir project_root;
+
+  match Config.load ~env Eio.Path.(env#fs / project_root) with
   | Ok x -> x
   | Error (`Msg err) -> failwith err
 
