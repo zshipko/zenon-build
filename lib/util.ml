@@ -237,3 +237,7 @@ let parse_gitignore path =
       lines
     |> List.of_seq
   else []
+
+let extension_is_c_or_cxx = function
+  | "c" | "cc" | "cpp" | "cxx" -> true
+  | _ -> false

@@ -29,7 +29,7 @@ let parse_line line : string list =
             acc)
       [] line
   in
-  next x
+  List.rev @@ next x
 
 let cflags ~env names =
   if List.is_empty names then []

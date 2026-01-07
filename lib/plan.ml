@@ -129,11 +129,23 @@ let build t (b : Build.t) =
                 |> List.map (fun c -> String_set.to_list c.ext))
         in
         let flags =
-          Flags.concat flags
-          @@ Flags.concat
-               (Hashtbl.find_opt b.compiler_flags ext
-               |> Option.value ~default:(Flags.v ()))
-               b.flags
+          (* Only include compiler-specific flags in the edge, not b.flags
+             since b.flags gets added in run_build *)
+          let lang_flags =
+            Hashtbl.find_opt b.compiler_flags ext
+            |> Option.value ~default:(Flags.v ())
+          in
+          let flags_with_c =
+            if Util.extension_is_c_or_cxx ext then lang_flags
+            else
+              let c_flags =
+                Hashtbl.find_opt b.compiler_flags "c"
+                |> Option.value ~default:(Flags.v ())
+              in
+              let wrapped_c_flags = compiler.wrap_c_flags c_flags in
+              Flags.concat wrapped_c_flags lang_flags
+          in
+          Flags.concat flags flags_with_c
         in
         G.add_edge_e t.graph
         @@ G.E.create src_node (Some (Compiler (compiler, Some flags))) obj_node;
@@ -169,9 +181,6 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
   let flags = Flags.v () in
-  let b_flags = Flags.concat flags @@ Flags.concat pkg b.flags in
-  let link_flags = ref b_flags in
-  let count = ref 0 in
   (* Use ordered sources from Plan hashtable to preserve file order from config *)
   let sources =
     Hashtbl.find_opt t.ordered_sources b.name |> Option.value ~default:[]
@@ -188,6 +197,28 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
       sources
   in
   let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
+  let primary_compiler =
+    let source_exts =
+      List.fold_left
+        (fun acc src -> String_set.add (Source_file.ext src) acc)
+        String_set.empty sources
+    in
+    Compiler.Set.to_list b.compilers
+    |> List.find_opt (fun c ->
+           not (String_set.is_empty (String_set.inter c.ext source_exts)))
+    |> Option.value ~default:Compiler.clang
+  in
+  (* Wrap C flags for non-C builds (pkg-config and C-specific flags need wrapping) *)
+  let b_flags =
+    let c_flags =
+      Hashtbl.find_opt b.compiler_flags "c"
+      |> Option.value ~default:(Flags.v ())
+    in
+    let wrapped_c = primary_compiler.wrap_c_flags (Flags.concat pkg c_flags) in
+    Flags.concat flags @@ Flags.concat wrapped_c b.flags
+  in
+  let link_flags = ref b_flags in
+  let count = ref 0 in
 
   let start = Unix.gettimeofday () in
   let visited_flags = Hashtbl.create 8 in

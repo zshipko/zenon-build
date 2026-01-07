@@ -10,6 +10,7 @@ type t = {
   transform_output : Object_file.t -> Object_file.t;
   parallel : bool;
   ext : String_set.t;
+  wrap_c_flags : Flags.t -> Flags.t;
 }
 
 let c_like ?(force_color = "-fcolor-diagnostics") cc =
@@ -19,15 +20,14 @@ let c_like ?(force_color = "-fcolor-diagnostics") cc =
   @ flags.Flags.compile
   @ [ Eio.Path.native_exn output.source.path ]
 
-let transform_output obj = obj
-
 let clang =
   {
     name = "clang";
     command = c_like [ "clang" ];
     ext = String_set.of_list [ "c"; "s"; "ll"; "bc" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags = Fun.id;
   }
 
 let clangxx =
@@ -35,8 +35,9 @@ let clangxx =
     name = "clang++";
     command = c_like [ "clang++" ];
     ext = String_set.of_list [ "cc"; "cpp"; "cxx" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags = Fun.id;
   }
 
 let ispc =
@@ -54,8 +55,9 @@ let ispc =
         @ flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);
     ext = String_set.of_list [ "ispc" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags = Fun.id;
   }
 
 let ghc =
@@ -78,8 +80,12 @@ let ghc =
         in
         [
           "ghc";
+          "-pgmc";
+          "clang";
           "-fdiagnostics-color=always";
           "-v0";
+          "-package";
+          "base";
           "-c";
           "-o";
           Eio.Path.native_exn output.Object_file.path;
@@ -87,8 +93,15 @@ let ghc =
         @ hidir @ include_paths @ flags.Flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);
     ext = String_set.of_list [ "hs"; "lhs" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = false;
+    wrap_c_flags =
+      (fun flags ->
+        let compile =
+          List.concat_map (fun x -> [ "-optc" ^ x ]) flags.Flags.compile
+        in
+        let link = List.concat_map (fun x -> [ "-optl" ^ x ]) flags.link in
+        Flags.v ~compile ~link ());
   }
 
 let ocaml =
@@ -107,6 +120,8 @@ let ocaml =
         [
           "ocamlfind";
           "ocamlopt";
+          "-cc";
+          "clang";
           "-I";
           "+unix";
           "-color=always";
@@ -125,6 +140,13 @@ let ocaml =
         in
         { obj with path = (p, dest) });
     parallel = false;
+    wrap_c_flags =
+      (fun flags ->
+        let compile =
+          List.concat_map (fun x -> [ "-cclib"; x ]) flags.Flags.compile
+        in
+        let link = List.concat_map (fun x -> [ "-ccopt"; x ]) flags.link in
+        Flags.v ~compile ~link ());
   }
 
 let mlton =
@@ -140,7 +162,8 @@ let mlton =
           List.concat_map (fun x -> [ "-cc-opt"; x ]) flags.compile
         in
         let args =
-          [ "mlton"; "-stop"; "o"; "-output"; out ] @ cc_opts @ [ src ]
+          [ "mlton"; "-cc"; "clang"; "-stop"; "o"; "-output"; out ]
+          @ cc_opts @ [ src ]
         in
         [
           "sh";
@@ -152,8 +175,15 @@ let mlton =
               out out out out out;
         ]);
     ext = String_set.of_list [ "sml"; "mlb" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags =
+      (fun flags ->
+        let compile =
+          List.concat_map (fun x -> [ "-cc-opt"; x ]) flags.Flags.compile
+        in
+        let link = List.concat_map (fun x -> [ "-link-opt"; x ]) flags.link in
+        Flags.v ~compile ~link ());
   }
 
 let ats2 =
@@ -162,8 +192,9 @@ let ats2 =
     command =
       c_like [ "patscc"; "-Wno-unused-command-line-argument"; "-cleanaft" ];
     ext = String_set.of_list [ "dats"; "sats" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags = Fun.id;
   }
 
 let flang =
@@ -171,8 +202,9 @@ let flang =
     name = "flang-new";
     command = c_like [ "flang-new" ];
     ext = String_set.of_list [ "f"; "f90"; "f95"; "f03"; "f08"; "F"; "F90" ];
-    transform_output;
+    transform_output = Fun.id;
     parallel = true;
+    wrap_c_flags = Fun.id;
   }
 
 let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang; ocaml ]

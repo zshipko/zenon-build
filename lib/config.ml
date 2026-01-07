@@ -11,6 +11,9 @@ module Compiler_config = struct
     link_type : string; [@key "link-type"] [@default "exe"]
     has_runtime : bool; [@key "has-runtime"] [@default false]
     parallel : bool; [@default true]
+    compile_flag_prefix : string option;
+        [@key "compile-flag-prefix"] [@default None]
+    link_flag_prefix : string option; [@key "link-flag-prefix"] [@default None]
   }
   [@@deriving yaml]
 
@@ -22,11 +25,33 @@ module Compiler_config = struct
       link_type = "exe";
       has_runtime = false;
       parallel = true;
+      compile_flag_prefix = None;
+      link_flag_prefix = None;
     }
 
   let compiler ?compilers t =
     match t.command with
     | Some cmd ->
+        let wrap_c_flags flags =
+          if
+            Option.is_none t.compile_flag_prefix
+            && Option.is_none t.link_flag_prefix
+          then flags
+          else
+            let compile =
+              Option.fold ~none:flags.Flags.compile
+                ~some:(fun prefix ->
+                  List.concat_map (fun x -> [ prefix; x ]) flags.compile)
+                t.compile_flag_prefix
+            in
+            let link =
+              Option.fold ~none:flags.link
+                ~some:(fun prefix ->
+                  List.concat_map (fun x -> [ prefix; x ]) flags.link)
+                t.link_flag_prefix
+            in
+            Flags.v ~compile ~link ()
+        in
         Compiler.
           {
             name = t.name;
@@ -42,6 +67,7 @@ module Compiler_config = struct
                   [] cmd);
             transform_output = Fun.id;
             parallel = t.parallel;
+            wrap_c_flags;
           }
     | None -> (
         match Compiler.find_by_name ?compilers t.name with

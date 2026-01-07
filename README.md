@@ -226,4 +226,37 @@ In the example above, `#objs`, `#flags` and `#output` are template arguments and
 - `has-runtime` - For linkers, specifies if the language links a runtime. If it does then this linker must be used if any matching
   source files are present
 - `parallel` - For compilers, specified whether parallel builds are allowed
+- `compile-flag-prefix` - Prefix for wrapping C compile flags (e.g., `-ccopt` for OCaml)
+- `link-flag-prefix` - Prefix for wrapping C link flags (e.g., `-ccopt` for OCaml)
+
+### Using C libraries with other languages
+
+C flags (including those from pkg-config) are automatically passed to non-C compilers with appropriate wrapping. For example:
+
+```yaml
+flags:
+  - lang: c
+    compile: ["-I/usr/local/include"]
+    link: ["-L/usr/local/lib", "-lsqlite3"]
+
+build:
+  - target: myapp
+    compilers: [ocamlfind]
+    files: ['src/*.ml']
+    pkg: [libpq]  # PostgreSQL C library
+```
+
+The C flags will be automatically wrapped for OCaml as `-ccopt -I/usr/local/include -ccopt -L/usr/local/lib -ccopt -lsqlite3`, and pkg-config flags from `libpq` will also be wrapped appropriately.
+
+For custom compilers, use `compile-flag-prefix` and `link-flag-prefix`:
+
+```yaml
+tools:
+  compilers:
+    - name: my-language
+      ext: [myl]
+      command: ["mylang", "#flags", "-o", "#output"]
+      compile-flag-prefix: "-ccopt"
+      link-flag-prefix: "-cclib"
+```
 

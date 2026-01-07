@@ -11,24 +11,13 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     | [] ->
         ( [ "default" ],
           [
-            Build.v env ~ignore:ignore_patterns ~pkgconf:pkg
-              ~flags:(Flags.v ~compile:cflags ~link:ldflags ())
+            Build.v env ~ignore:ignore_patterns ~pkgconf:pkg ~flags:(Flags.v ())
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default"
               ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
               ?linker:
                 (Option.map
-                   (fun name ->
-                     Config.Compiler_config.(
-                       linker
-                         {
-                           name;
-                           ext = [];
-                           command = None;
-                           link_type = "exe";
-                           has_runtime = false;
-                           parallel = true;
-                         }))
+                   (fun name -> Config.Compiler_config.(linker (named name)))
                    linker);
           ] )
     | x -> (builds, x)
@@ -61,14 +50,17 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
             | None -> build.Build.output
             | Some output -> Some Eio.Path.(env#cwd / output)
           in
-          let () = Build.add_compile_flags build cflags in
-          let () = Build.add_link_flags build ldflags in
+          let all_flags =
+            Flags.concat build.Build.flags
+              (Flags.v ~compile:cflags ~link:ldflags ())
+          in
           let () =
             Build.add_source_files ~reset:(not (List.is_empty file)) build file
           in
           Plan.build plan
             {
               build with
+              flags = all_flags;
               pkgconf = build.Build.pkgconf @ pkg;
               ignore = build.Build.ignore @ ignore_patterns;
               output;

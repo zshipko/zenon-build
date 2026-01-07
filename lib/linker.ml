@@ -118,8 +118,14 @@ let ghc =
         in
         [
           "ghc";
+          "-pgmc";
+          "clang";
+          "-pgml";
+          "clang";
           "-v0";
           "-fdiagnostics-color=always";
+          "-package";
+          "base";
           "-o";
           Eio.Path.native_exn output;
         ]
@@ -148,8 +154,11 @@ let ocaml =
         [
           "ocamlfind";
           "ocamlopt";
+          "-cc";
+          "clang";
           "-I";
           "+unix";
+          "unix.cmxa";
           "-color=always";
           "-linkall";
           "-o";
@@ -169,9 +178,8 @@ let mlton =
         let objs =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
-        [ "mlton"; "-output"; Eio.Path.native_exn output ]
-        @ List.concat_map (fun x -> [ "-link-opt"; x ]) flags.Flags.link
-        @ objs);
+        [ "mlton"; "-cc"; "clang"; "-output"; Eio.Path.native_exn output ]
+        @ flags.Flags.link (* Wrapping now done by wrap_c_flags *) @ objs);
     link_type = Executable;
   }
 
