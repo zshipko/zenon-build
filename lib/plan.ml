@@ -79,7 +79,7 @@ let build t (b : Build.t) =
       Hashtbl.to_seq_keys b.compiler_index
       |> Seq.iter (fun ext -> Build.add_source_file b ("**." ^ ext))
   in
-  let source_files = Build.locate_source_files b in
+  let source_files = Build.locate_source_files b |> List.of_seq in
   (* Store ordered source files in the plan for later use *)
   Hashtbl.replace t.ordered_sources b.name source_files;
   let flags = Flags.v () in

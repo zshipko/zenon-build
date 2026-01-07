@@ -11,7 +11,26 @@ let rec collect_dependencies build_map name visited =
           (fun acc dep -> collect_dependencies build_map dep acc)
           visited build.Build.depends_on
 
-let load_config env path =
+let filter_builds builds names =
+  if List.is_empty names then
+    List.filter_map
+      (fun x -> if x.Build.hidden then None else Some x.Build.name)
+      builds
+  else names
+
+let filter_builds_for_cwd rel_path builds x =
+  match rel_path with
+  | Some rel when List.is_empty builds ->
+      let abs_rel = Unix.realpath rel in
+      List.filter
+        (fun b ->
+          let source_path = Eio.Path.native_exn b.Build.source in
+          let abs_source = Unix.realpath source_path in
+          String.equal abs_source abs_rel)
+        x
+  | _ -> x
+
+let load_config ~builds env path : Build.t list =
   let normalized_path = Unix.realpath path in
   let eio_path = Eio.Path.(env#fs / normalized_path) in
 
@@ -42,13 +61,14 @@ let load_config env path =
   Sys.chdir project_root;
 
   match Config.load ~env project_root_path with
-  | Ok x -> (x, rel_path)
+  | Ok x -> filter_builds_for_cwd rel_path builds x
   | Error (`Msg err) -> failwith err
 
 let find_build builds name =
-  match name with
-  | Some name -> List.find_opt (fun b -> b.Build.name = name) builds
-  | None -> ( try Some (List.hd builds) with _ -> None)
+  match (name, builds) with
+  | Some name, builds -> List.find_opt (fun b -> b.Build.name = name) builds
+  | None, [] -> None
+  | None, h :: _ -> Some h
 
 let lib_name b =
   let name = b.Build.name in
@@ -62,13 +82,6 @@ let lib_name b =
 let c_flags b =
   Hashtbl.find_opt b.Build.compiler_flags "c"
   |> Option.value ~default:(Flags.v ())
-
-let filter_builds builds names =
-  if List.is_empty names then
-    List.filter_map
-      (fun x -> if x.Build.hidden then None else Some x.Build.name)
-      builds
-  else names
 
 let make_build_map builds =
   List.fold_left

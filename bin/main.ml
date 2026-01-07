@@ -9,7 +9,7 @@ let clean ~path ~builds () =
   if List.is_empty builds then
     Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
   else
-    let x, _rel_path = load_config env path in
+    let x = load_config ~builds env path in
     let builds = String_set.of_list builds in
     let x =
       if String_set.is_empty builds then x
@@ -51,7 +51,7 @@ let cmd_clean =
 
 let run ~path ~target ~args ~build () =
   Eio_posix.run @@ fun env ->
-  let x, _rel_path = load_config env path in
+  let x = load_config ~builds:[ build ] env path in
   let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"

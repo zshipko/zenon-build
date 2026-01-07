@@ -5,7 +5,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) ~log_level () =
   Eio_posix.run @@ fun env ->
   let ignore_patterns = List.map Util.glob_path ignore in
-  let x, rel_path = load_config env path in
+  let x = load_config ~builds env path in
   let builds, x =
     match x with
     | [] ->
@@ -21,18 +21,6 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                    linker);
           ] )
     | x -> (builds, x)
-  in
-  let x =
-    match rel_path with
-    | Some rel when List.is_empty builds ->
-        let abs_rel = Unix.realpath rel in
-        List.filter
-          (fun b ->
-            let source_path = Eio.Path.native_exn b.Build.source in
-            let abs_source = Unix.realpath source_path in
-            String.equal abs_source abs_rel)
-          x
-    | _ -> x
   in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
@@ -56,7 +44,9 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
   let ldflags_by_lang = Hashtbl.create 8 in
   List.iter
     (fun (lang, flag) ->
-      let flags = try Hashtbl.find ldflags_by_lang lang with Not_found -> [] in
+      let flags =
+        try Hashtbl.find ldflags_by_lang lang with Not_found -> []
+      in
       Hashtbl.replace ldflags_by_lang lang (flag :: flags))
     lang_ldflags;
   let () =
@@ -65,7 +55,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
         if
           String_set.is_empty builds_with_deps_set
           || String_set.mem build.Build.name builds_with_deps_set
-        then
+        then (
           let output =
             match output with
             | None -> build.Build.output
@@ -111,7 +101,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                   (fun l -> Config.Compiler_config.(linker @@ named l))
                   linker
                 |> Option.value ~default:build.Build.linker;
-            })
+            }))
       x
   in
   Plan.run_all ~execute:run ~args:arg ~log_level ~env plan

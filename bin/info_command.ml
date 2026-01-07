@@ -3,7 +3,7 @@ open Common
 
 let info ~path ~builds () =
   Eio_posix.run @@ fun env ->
-  let x, _rel_path = load_config env path in
+  let x = load_config ~builds env path in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in
@@ -12,7 +12,7 @@ let info ~path ~builds () =
   in
   List.iter
     (fun (b : Build.t) ->
-      let sources = Build.locate_source_files b in
+      let sources = Build.locate_source_files b |> List.of_seq in
       let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
       Fmt.pr "@[<v 2>Target: %s@," b.name;
       (match b.output with
@@ -25,8 +25,7 @@ let info ~path ~builds () =
         | Linker.Static -> "static lib");
       Fmt.pr "Linker: %s@," linker.name;
 
-      let source_files = Build.locate_source_files b in
-      Fmt.pr "Source files: %d@," (List.length source_files);
+      Fmt.pr "Source files: %d@," (List.length sources);
 
       List.iter
         (fun (f : Source_file.t) ->
@@ -39,7 +38,7 @@ let info ~path ~builds () =
           Fmt.pr "  %s: (compiler %s)@,"
             (Eio.Path.native_exn f.path)
             compiler_name)
-        source_files;
+        sources;
 
       if not (List.is_empty b.depends_on) then
         Fmt.pr "Dependencies: %a@,"
