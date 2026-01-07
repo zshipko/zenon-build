@@ -29,29 +29,27 @@ module Compiler_config = struct
       link_flag_prefix = None;
     }
 
+  let wrap_c_flags t flags =
+    if Option.is_none t.compile_flag_prefix && Option.is_none t.link_flag_prefix
+    then flags
+    else
+      let compile =
+        Option.fold ~none:flags.Flags.compile
+          ~some:(fun prefix ->
+            List.concat_map (fun x -> [ prefix; x ]) flags.compile)
+          t.compile_flag_prefix
+      in
+      let link =
+        Option.fold ~none:flags.link
+          ~some:(fun prefix ->
+            List.concat_map (fun x -> [ prefix; x ]) flags.link)
+          t.link_flag_prefix
+      in
+      Flags.v ~compile ~link ()
+
   let compiler ?compilers t =
     match t.command with
     | Some cmd ->
-        let wrap_c_flags flags =
-          if
-            Option.is_none t.compile_flag_prefix
-            && Option.is_none t.link_flag_prefix
-          then flags
-          else
-            let compile =
-              Option.fold ~none:flags.Flags.compile
-                ~some:(fun prefix ->
-                  List.concat_map (fun x -> [ prefix; x ]) flags.compile)
-                t.compile_flag_prefix
-            in
-            let link =
-              Option.fold ~none:flags.link
-                ~some:(fun prefix ->
-                  List.concat_map (fun x -> [ prefix; x ]) flags.link)
-                t.link_flag_prefix
-            in
-            Flags.v ~compile ~link ()
-        in
         Compiler.
           {
             name = t.name;
@@ -67,7 +65,7 @@ module Compiler_config = struct
                   [] cmd);
             transform_output = Fun.id;
             parallel = t.parallel;
-            wrap_c_flags;
+            wrap_c_flags = wrap_c_flags t;
           }
     | None -> (
         match Compiler.find_by_name ?compilers t.name with
@@ -83,6 +81,7 @@ module Compiler_config = struct
             link_type = Linker.link_type_of_string t.link_type;
             exts = String_set.of_list t.ext;
             has_runtime = t.has_runtime;
+            wrap_c_flags = wrap_c_flags t;
             command =
               (fun ~flags ~objs ~output ->
                 List.fold_left

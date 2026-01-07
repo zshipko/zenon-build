@@ -4,7 +4,26 @@ An experimental build system and script runner for languages and compilers suppo
 
 Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](https://clang.llvm.org/), [flang](https://flang.llvm.org/docs/),
 [ispc](https://ispc.github.io/), [ocaml](https://ocaml.org), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [ats2](http://www.ats-lang.org)
-and additional compilers can be specified in the `zenon.yaml` file. 
+and additional compilers can be specified in the `zenon.yaml` file.
+
+`zenon` is particularly useful when you have some files in a directory, like:
+
+```sh
+$ ls
+a.c    b.c     c.c
+```
+
+you can compile and link these files into an executable by running:
+
+```sh
+$ zenon build -o my.exe
+```
+
+Or linking the `libgit2` library using `pkg-config`:
+
+```sh
+$ zenon build -o my.exe --pkg libgit2
+```
 
 ## Installation
 
@@ -64,7 +83,6 @@ Glob patterns are also supported:
 ```sh
 $ zenon build -f 'src/*.c'
 ```
-
 
 ## Configuration
 
@@ -224,7 +242,8 @@ In the example above, `#objs`, `#flags` and `#output` are template arguments and
 - `command` - Command template (`#flags`, `#output`, `#objs` are substituted)
 - `link-type` - Specifies the type of linker (should only be set when defining linkers)
 - `has-runtime` - For linkers, specifies if the language links a runtime. If it does then this linker must be used if any matching
-  source files are present
+  source files are present. Compilers with `has-runtime` set to true (`ocamlopt`, `ghc`, `mlton`, ...) can't be mixed without custom linking rules. However, all
+  the available languages can be mixed with C/Fortran code. 
 - `parallel` - For compilers, specified whether parallel builds are allowed
 - `compile-flag-prefix` - Prefix for wrapping C compile flags (e.g., `-ccopt` for OCaml)
 - `link-flag-prefix` - Prefix for wrapping C link flags (e.g., `-ccopt` for OCaml)

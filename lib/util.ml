@@ -241,3 +241,15 @@ let parse_gitignore path =
 let extension_is_c_or_cxx = function
   | "c" | "cc" | "cpp" | "cxx" -> true
   | _ -> false
+
+let remove_duplicates_preserving_order lst =
+  let seen = Hashtbl.create (List.length lst) in
+  let acc = ref [] in
+  List.iter
+    (fun x ->
+      if not (Hashtbl.mem seen x) then (
+        Hashtbl.add seen x ();
+        acc := x :: !acc))
+    lst;
+  List.rev !acc
+

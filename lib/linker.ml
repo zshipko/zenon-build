@@ -11,6 +11,7 @@ type t = {
   has_runtime : bool;
   command :
     flags:Flags.t -> objs:Object_file.t list -> output:path -> string list;
+  wrap_c_flags : Flags.t -> Flags.t;
 }
 
 let link_type_of_string s =
@@ -55,6 +56,7 @@ let clang =
     has_runtime = false;
     command = c_like [ "clang" ];
     link_type = Executable;
+    wrap_c_flags = Compiler.clang.wrap_c_flags;
   }
 
 let clang_shared =
@@ -64,6 +66,7 @@ let clang_shared =
     has_runtime = false;
     command = c_like [ "clang"; "-shared" ];
     link_type = Shared;
+    wrap_c_flags = Compiler.clang.wrap_c_flags;
   }
 
 let clangxx =
@@ -73,6 +76,7 @@ let clangxx =
     has_runtime = true;
     command = c_like [ "clang++" ];
     link_type = Executable;
+    wrap_c_flags = Compiler.clangxx.wrap_c_flags;
   }
 
 let clangxx_shared =
@@ -82,6 +86,7 @@ let clangxx_shared =
     has_runtime = true;
     command = c_like [ "clang++"; "-shared" ];
     link_type = Shared;
+    wrap_c_flags = Compiler.clangxx.wrap_c_flags;
   }
 
 let ar =
@@ -96,6 +101,7 @@ let ar =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
         [ "ar"; "rcs"; Eio.Path.native_exn output ] @ objs);
+    wrap_c_flags = Fun.id;
   }
 
 let ghc =
@@ -131,6 +137,7 @@ let ghc =
         ]
         @ include_paths @ flags.Flags.link @ objs);
     link_type = Executable;
+    wrap_c_flags = Compiler.ghc.wrap_c_flags;
   }
 
 let ocaml =
@@ -166,6 +173,7 @@ let ocaml =
         ]
         @ include_paths @ flags.Flags.link @ objs);
     link_type = Executable;
+    wrap_c_flags = Compiler.ocaml.wrap_c_flags;
   }
 
 let mlton =
@@ -181,6 +189,7 @@ let mlton =
         [ "mlton"; "-cc"; "clang"; "-output"; Eio.Path.native_exn output ]
         @ flags.Flags.link (* Wrapping now done by wrap_c_flags *) @ objs);
     link_type = Executable;
+    wrap_c_flags = Compiler.mlton.wrap_c_flags;
   }
 
 let ats2 =
@@ -190,6 +199,7 @@ let ats2 =
     has_runtime = true;
     command = c_like [ "patscc" ];
     link_type = Executable;
+    wrap_c_flags = Compiler.ats2.wrap_c_flags;
   }
 
 let flang =
@@ -199,6 +209,7 @@ let flang =
     has_runtime = false;
     command = c_like [ "flang-new" ];
     link_type = Executable;
+    wrap_c_flags = Compiler.flang.wrap_c_flags;
   }
 
 let default =

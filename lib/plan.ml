@@ -76,7 +76,8 @@ let graph t = t.graph
 let build t (b : Build.t) =
   let () =
     if List.is_empty b.files && Option.is_none b.script then
-      Build.add_source_file b "*.c"
+      Hashtbl.to_seq_keys b.compiler_index
+      |> Seq.iter (fun ext -> Build.add_source_file b ("**." ^ ext))
   in
   let source_files = Build.locate_source_files b in
   (* Store ordered source files in the plan for later use *)
@@ -134,11 +135,13 @@ let build t (b : Build.t) =
             |> Option.value ~default:b.flags
           in
           let flags_with_c =
-            let c_flags =
-              Hashtbl.find_opt b.compiler_flags "c"
-              |> Option.value ~default:(Flags.v ())
-            in
-            Flags.concat (compiler.wrap_c_flags c_flags) lang_flags
+            if Util.extension_is_c_or_cxx ext then lang_flags
+            else
+              let c_flags =
+                Hashtbl.find_opt b.compiler_flags "c"
+                |> Option.value ~default:(Flags.v ())
+              in
+              Flags.concat (compiler.wrap_c_flags c_flags) lang_flags
           in
           Flags.concat flags flags_with_c
         in
@@ -207,8 +210,16 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
       Hashtbl.find_opt b.compiler_flags "c"
       |> Option.value ~default:(Flags.v ())
     in
-    let wrapped_c = primary_compiler.wrap_c_flags (Flags.concat pkg c_flags) in
-    Flags.concat wrapped_c b.flags
+    let wrapped_c =
+      primary_compiler.wrap_c_flags
+        (Flags.concat
+           (Flags.v ~compile:pkg.compile ())
+           (Flags.v ~compile:c_flags.compile ()))
+    in
+    let l_flags =
+      Flags.concat (Flags.v ~link:pkg.link ()) (Flags.v ~link:c_flags.link ())
+    in
+    Flags.concat l_flags @@ Flags.concat wrapped_c b.flags
   in
   let link_flags = ref b_flags in
   let count = ref 0 in
@@ -223,7 +234,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
     List.map
       (fun (v', obj) ->
         let obj_node = Obj obj in
-        match G.find_edge t.graph v' obj_node |> G.E.label with
+        match G.E.label @@ G.find_edge t.graph v' obj_node with
         | None -> None
         | Some edge' -> (
             match edge' with
@@ -303,10 +314,18 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
+      let final_link_flags =
+        {
+          !link_flags with
+          link =
+            Util.remove_duplicates_preserving_order
+              (linker.wrap_c_flags !link_flags).link;
+        }
+      in
       (if Util.is_debug log_level then
-         let link_cmd = linker.command ~flags:!link_flags ~objs ~output in
+         let link_cmd = linker.command ~flags:final_link_flags ~objs ~output in
          Util.log "  $ %s" (String.concat " " link_cmd));
-      Linker.link linker b.env#process_mgr ~objs ~output ~flags:!link_flags
+      Linker.link linker b.env#process_mgr ~objs ~output ~flags:final_link_flags
         ~build_dir:b.build)
     b.output;
   Option.iter
