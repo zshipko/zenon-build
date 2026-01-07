@@ -15,12 +15,28 @@ let targets =
   Arg.(value & pos_all string [] & info [] ~doc ~docv:"TARGETS")
 
 let cflag =
-  let doc = "Compiler flag" in
-  Arg.(value & opt_all string [] & info [ "cflag"; "c" ] ~doc ~docv:"FLAG")
+  let doc =
+    "Compiler flag for a specific language (e.g. -c c=-O2). Use 'all' for all \
+     languages."
+  in
+  Arg.(
+    value
+    & opt_all
+        (pair ~sep:'=' string string)
+        []
+    & info [ "cflag"; "c" ] ~doc ~docv:"LANG=FLAG")
 
 let ldflag =
-  let doc = "Linker flag" in
-  Arg.(value & opt_all string [] & info [ "lflag"; "l" ] ~doc ~docv:"FLAG")
+  let doc =
+    "Linker flag for a specific language (e.g. -l c=-lm). Use 'all' for all \
+     languages."
+  in
+  Arg.(
+    value
+    & opt_all
+        (pair ~sep:'=' string string)
+        []
+    & info [ "lflag"; "l" ] ~doc ~docv:"LANG=FLAG")
 
 let ignore =
   let doc = "Ignore file" in

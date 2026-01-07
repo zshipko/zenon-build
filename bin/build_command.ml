@@ -38,6 +38,27 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in
   let plan = Plan.v () in
+  (* Separate generic and language-specific flags *)
+  let generic_cflags, lang_cflags =
+    List.partition (fun (lang, _) -> lang = "all") cflags
+  in
+  let generic_ldflags, lang_ldflags =
+    List.partition (fun (lang, _) -> lang = "all") ldflags
+  in
+  let generic_cflags = List.map snd generic_cflags in
+  let generic_ldflags = List.map snd generic_ldflags in
+  let cflags_by_lang = Hashtbl.create 8 in
+  List.iter
+    (fun (lang, flag) ->
+      let flags = try Hashtbl.find cflags_by_lang lang with Not_found -> [] in
+      Hashtbl.replace cflags_by_lang lang (flag :: flags))
+    lang_cflags;
+  let ldflags_by_lang = Hashtbl.create 8 in
+  List.iter
+    (fun (lang, flag) ->
+      let flags = try Hashtbl.find ldflags_by_lang lang with Not_found -> [] in
+      Hashtbl.replace ldflags_by_lang lang (flag :: flags))
+    lang_ldflags;
   let () =
     List.iter
       (fun build ->
@@ -50,17 +71,38 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
             | None -> build.Build.output
             | Some output -> Some Eio.Path.(env#cwd / output)
           in
-          let all_flags =
-            Flags.concat build.Build.flags
-              (Flags.v ~compile:cflags ~link:ldflags ())
-          in
+          (* Add generic flags to build.flags *)
+          Flags.add_compile_flags build.Build.flags generic_cflags;
+          Flags.add_link_flags build.Build.flags generic_ldflags;
+          (* Add language-specific flags to build.compiler_flags *)
+          Hashtbl.iter
+            (fun lang flags ->
+              let existing_flags =
+                try Hashtbl.find build.Build.compiler_flags lang
+                with Not_found ->
+                  let new_flags = Flags.v () in
+                  Hashtbl.add build.Build.compiler_flags lang new_flags;
+                  new_flags
+              in
+              Flags.add_compile_flags existing_flags (List.rev flags))
+            cflags_by_lang;
+          Hashtbl.iter
+            (fun lang flags ->
+              let existing_flags =
+                try Hashtbl.find build.Build.compiler_flags lang
+                with Not_found ->
+                  let new_flags = Flags.v () in
+                  Hashtbl.add build.Build.compiler_flags lang new_flags;
+                  new_flags
+              in
+              Flags.add_link_flags existing_flags (List.rev flags))
+            ldflags_by_lang;
           let () =
             Build.add_source_files ~reset:(not (List.is_empty file)) build file
           in
           Plan.build plan
             {
               build with
-              flags = all_flags;
               pkgconf = build.Build.pkgconf @ pkg;
               ignore = build.Build.ignore @ ignore_patterns;
               output;
