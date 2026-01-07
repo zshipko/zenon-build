@@ -194,19 +194,19 @@ let rec find_config_in_parents path =
   if Eio.Path.is_file yml_path then Some yml_path
   else if Eio.Path.is_file yaml_path then Some yaml_path
   else
-    (* Get parent directory *)
     let native = Eio.Path.native_exn path in
-    let parent = Filename.dirname native in
-    (* Stop if we've reached the root directory *)
+    (* Stop if we're at the root *)
     if
-      String.equal parent native || String.equal parent "/"
-      || String.equal parent "." || String.equal parent ""
+      String.equal native "/" || String.equal native "."
+      || String.equal native ""
     then None
     else
-      (* Search in parent *)
       match Eio.Path.split path with
       | None -> None
-      | Some (parent_path, _) -> find_config_in_parents parent_path
+      | Some (parent_path, _) ->
+          let parent_native = Eio.Path.native_exn parent_path in
+          if String.equal native parent_native then None
+          else find_config_in_parents parent_path
 
 let read_file_or_default path =
   if Eio.Path.is_file path then read_file path

@@ -5,7 +5,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) ~log_level () =
   Eio_posix.run @@ fun env ->
   let ignore_patterns = List.map Util.glob_path ignore in
-  let x = load_config env path in
+  let x, rel_path = load_config env path in
   let builds, x =
     match x with
     | [] ->
@@ -32,6 +32,18 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                    linker);
           ] )
     | x -> (builds, x)
+  in
+  let x =
+    match rel_path with
+    | Some rel when List.is_empty builds ->
+        let abs_rel = Unix.realpath rel in
+        List.filter
+          (fun b ->
+            let source_path = Eio.Path.native_exn b.Build.source in
+            let abs_source = Unix.realpath source_path in
+            String.equal abs_source abs_rel)
+          x
+    | _ -> x
   in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in

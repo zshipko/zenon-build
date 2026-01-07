@@ -159,7 +159,8 @@ let mlton =
 let ats2 =
   {
     name = "patscc";
-    command = c_like [ "patscc"; "-Wno-unused-command-line-argument" ];
+    command =
+      c_like [ "patscc"; "-Wno-unused-command-line-argument"; "-cleanaft" ];
     ext = String_set.of_list [ "dats"; "sats" ];
     transform_output;
     parallel = true;

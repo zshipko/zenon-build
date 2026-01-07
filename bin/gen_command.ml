@@ -3,7 +3,7 @@ open Common
 
 let pkg ~path ~prefix ~target ~version ?output () =
   Eio_posix.run @@ fun env ->
-  let x = load_config env path in
+  let x, _rel_path = load_config env path in
   let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"
@@ -23,7 +23,7 @@ let pkg ~path ~prefix ~target ~version ?output () =
 
 let graph ~path ~builds ?output () =
   Eio_posix.run @@ fun env ->
-  let x = load_config env path in
+  let x, _rel_path = load_config env path in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in
@@ -48,7 +48,7 @@ type compile_db_format = CompileCommands | CompileFlags
 
 let gitignore ~path ~builds ?output () =
   Eio_posix.run @@ fun env ->
-  let x = load_config env path in
+  let x, _rel_path = load_config env path in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in
@@ -90,7 +90,7 @@ let gitignore ~path ~builds ?output () =
 
 let compile_commands ~path ~builds ~format ?output () =
   Eio_posix.run @@ fun env ->
-  let x = load_config env path in
+  let x, _rel_path = load_config env path in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in

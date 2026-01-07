@@ -19,9 +19,7 @@ let load_config env path =
   let dir_path =
     if Eio.Path.is_directory eio_path then eio_path
     else
-      match Eio.Path.split eio_path with
-      | None -> eio_path
-      | Some (p, _) -> p
+      match Eio.Path.split eio_path with None -> eio_path | Some (p, _) -> p
   in
 
   let project_root =
@@ -33,10 +31,18 @@ let load_config env path =
     | None -> normalized_path
   in
 
+  let project_root_path = Eio.Path.(env#fs / project_root) in
+
+  (* Calculate the relative path from project root to original directory *)
+  let rel_path =
+    if String.equal normalized_path project_root then None
+    else try Some (Util.relative_to project_root_path dir_path) with _ -> None
+  in
+
   Sys.chdir project_root;
 
-  match Config.load ~env Eio.Path.(env#fs / project_root) with
-  | Ok x -> x
+  match Config.load ~env project_root_path with
+  | Ok x -> (x, rel_path)
   | Error (`Msg err) -> failwith err
 
 let find_build builds name =
