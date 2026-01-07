@@ -257,7 +257,7 @@ let init ?mtime ~env path t =
     Util.parse_gitignore Eio.Path.(path / ".gitignore")
   in
 
-  let config_ignore_patterns = List.map Util.glob_path t.ignore in
+  let config_ignore_patterns = List.map Util.glob t.ignore in
 
   List.filter_map
     (fun config ->
@@ -334,7 +334,7 @@ let init ?mtime ~env path t =
           | None -> (
               match config.target with Some p -> p | None -> "default")
         in
-        let build_ignore_patterns = List.map Util.glob_path config.ignore in
+        let build_ignore_patterns = List.map Util.glob config.ignore in
         let all_ignore =
           gitignore_patterns @ config_ignore_patterns @ build_ignore_patterns
         in

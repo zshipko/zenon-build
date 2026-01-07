@@ -60,8 +60,8 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     compiler_index;
     compilers;
     linker;
-    files = List.map Util.glob_path files;
-    headers = List.map Util.glob_path headers;
+    files = List.map Util.glob files;
+    headers = List.map Util.glob headers;
     script;
     after;
     depends_on;
@@ -118,7 +118,7 @@ let locate_source_files t : Source_file.t Seq.t =
   |> Seq.map (fun path -> Source_file.v ~root:t.source path)
 
 let locate_headers t : path Seq.t = locate_files t t.headers
-let add_source_file t path = t.files <- t.files @ [ Util.glob_path path ]
+let add_source_file t path = t.files <- t.files @ [ Util.glob path ]
 
 let add_source_files t ?(reset = false) files =
   if reset then t.files <- [];

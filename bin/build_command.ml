@@ -4,7 +4,7 @@ open Common
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) ~log_level () =
   Eio_posix.run @@ fun env ->
-  let ignore_patterns = List.map Util.glob_path ignore in
+  let ignore_patterns = List.map Util.glob ignore in
   let x = load_config ~builds env path in
   let builds, x =
     match x with

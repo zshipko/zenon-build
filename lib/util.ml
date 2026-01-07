@@ -193,9 +193,6 @@ let glob =
   Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
     ~expand_braces:true
 
-let glob_path path =
-  glob @@ Printf.sprintf "{%s,%s}" path @@ Filename.concat "**" path
-
 let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
   && String.ends_with ~suffix:".a" filename
@@ -233,7 +230,7 @@ let parse_gitignore path =
               String.sub line 1 (String.length line - 1)
             else line
           in
-          Some (glob_path pattern))
+          Some (glob pattern))
       lines
     |> List.of_seq
   else []
