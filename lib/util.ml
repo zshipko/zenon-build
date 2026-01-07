@@ -244,12 +244,10 @@ let extension_is_c_or_cxx = function
 
 let remove_duplicates_preserving_order lst =
   let seen = Hashtbl.create (List.length lst) in
-  let acc = ref [] in
-  List.iter
-    (fun x ->
-      if not (Hashtbl.mem seen x) then (
-        Hashtbl.add seen x ();
-        acc := x :: !acc))
-    lst;
-  List.rev !acc
-
+  List.fold_left
+    (fun acc x ->
+      if not (Hashtbl.mem seen x) then
+        let () = Hashtbl.add seen x () in
+        x :: acc
+      else acc)
+    [] lst
