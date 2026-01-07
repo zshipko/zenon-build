@@ -158,12 +158,9 @@ let mlton =
           Filename.quote (Eio.Path.native_exn output.Object_file.path)
         in
         let src = Filename.quote (Eio.Path.native_exn output.source.path) in
-        let cc_opts =
-          List.concat_map (fun x -> [ "-cc-opt"; x ]) flags.compile
-        in
         let args =
           [ "mlton"; "-cc"; "clang"; "-stop"; "o"; "-output"; out ]
-          @ cc_opts @ [ src ]
+          @ flags.compile @ [ src ]
         in
         [
           "sh";
