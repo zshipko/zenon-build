@@ -56,13 +56,13 @@ module Compiler_config = struct
             ext = String_set.of_list t.ext;
             command =
               (fun ~flags ~objects:_ ~output ->
-                List.fold_left
-                  (fun (acc : string list) x ->
+                List.concat_map
+                  (fun x ->
                     if String.equal x "#output" then
-                      acc @ [ Eio.Path.native_exn output.path ]
-                    else if String.equal x "#flags" then acc @ flags.compile
-                    else acc @ [ x ])
-                  [] cmd);
+                      [ Eio.Path.native_exn output.path ]
+                    else if String.equal x "#flags" then flags.compile
+                    else [ x ])
+                  cmd);
             transform_output = Fun.id;
             parallel = t.parallel;
             wrap_c_flags = wrap_c_flags t;
@@ -84,20 +84,20 @@ module Compiler_config = struct
             wrap_c_flags = wrap_c_flags t;
             command =
               (fun ~flags ~objs ~output ->
-                List.fold_left
-                  (fun (acc : string list) x ->
+                List.concat_map
+                  (fun x ->
                     if String.equal x "#objs" then
                       let objs =
                         List.map
                           (fun obj -> Eio.Path.native_exn obj.Object_file.path)
                           objs
                       in
-                      acc @ objs
+                      objs
                     else if String.equal x "#output" then
-                      acc @ [ Eio.Path.native_exn output ]
-                    else if String.equal x "#flags" then acc @ flags.link
-                    else acc @ [ x ])
-                  [] cmd);
+                      [ Eio.Path.native_exn output ]
+                    else if String.equal x "#flags" then flags.link
+                    else [ x ])
+                  cmd);
           }
     | None -> (
         match

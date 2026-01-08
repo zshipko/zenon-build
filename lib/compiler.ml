@@ -4,7 +4,7 @@ type t = {
   name : string;
   command :
     flags:Flags.t ->
-    objects:Object_file.t list ->
+    objects:Object_file.t Seq.t ->
     output:Object_file.t ->
     string list;
   transform_output : Object_file.t -> Object_file.t;
@@ -71,12 +71,13 @@ let ghc =
           | Some (p, _) -> [ "-hidir"; Eio.Path.native_exn p ]
         in
         let include_paths =
-          List.filter_map
+          Seq.filter_map
             (fun obj ->
               match Eio.Path.split obj.Object_file.path with
               | None -> None
               | Some (p, _) -> Some ("-i" ^ Eio.Path.native_exn p))
             objects
+          |> List.of_seq
         in
         [
           "ghc";
@@ -115,7 +116,7 @@ let ocaml =
               match Eio.Path.split obj.Object_file.path with
               | None -> []
               | Some (p, _) -> [ "-I"; Eio.Path.native_exn p ])
-            objects
+            (List.of_seq objects)
         in
         [
           "ocamlfind";

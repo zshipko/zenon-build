@@ -224,7 +224,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   let link_flags = ref b_flags in
   let start = Unix.gettimeofday () in
   let visited_flags = Hashtbl.create 8 in
-  let visited_objects = ref [] in
+  let visited_objects = Queue.create () in
   let build_state_mutex = Eio.Mutex.create () in
 
   (* Group objects by compiler for better parallelism *)
@@ -260,16 +260,13 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
            | _ -> assert false)
   in
 
-  let all_objs = ref [] in
-
   let update_build_state
       (objects_info : (Object_file.t * string * Flags.t option) list) =
     Eio.Mutex.use_rw ~protect:false build_state_mutex (fun () ->
         List.iter
           (fun (obj, compiler_name, flags_opt) ->
             let flags = Option.value ~default:(Flags.v ()) flags_opt in
-            visited_objects := !visited_objects @ [ obj ];
-            all_objs := obj :: !all_objs;
+            Queue.push obj visited_objects;
             let key =
               Digest.to_hex @@ Digest.string @@ compiler_name
               ^ String.concat "_" flags.link
@@ -291,6 +288,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   Eio.Switch.run @@ fun sw ->
   (* Handle parallel compiler groups *)
   let parallel_tasks =
+    let objects_for_compilation = Queue.to_seq visited_objects in
     List.concat_map
       (fun (_, entries) ->
         let to_compile, cached =
@@ -301,7 +299,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
               match
                 Compiler.compile_obj c ~output:obj ~sw ~log_level
                   ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
-                  ~objects:!visited_objects combined_flags
+                  ~objects:objects_for_compilation combined_flags
               with
               | Some task -> Left (c, obj, flags, combined_flags, task)
               | None -> Right (c, obj, flags))
@@ -315,6 +313,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
   in
 
   let compiled_objs =
+    let objects_for_linking = Queue.to_seq visited_objects in
     Eio.Fiber.List.filter_map
       (fun (c, obj, flags, combined_flags, (log_path, process)) ->
         try
@@ -325,7 +324,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
           let log = Log_file.get ~unlink:true log_path in
           let cmd =
             c.Compiler.command ~flags:combined_flags ~output:obj
-              ~objects:!visited_objects
+              ~objects:objects_for_linking
           in
           let filepath = Util.relative_to b.source obj.source.path in
           Util.log_error ~log_output:log ~filepath ~target:b.name
@@ -346,10 +345,11 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
               Flags.concat b_flags flags'
             in
             try
+              let objects_for_compilation = Queue.to_seq visited_objects in
               let task =
                 Compiler.compile_obj c ~output:obj ~sw ~log_level
                   ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
-                  ~objects:!visited_objects combined_flags
+                  ~objects:objects_for_compilation combined_flags
               in
               match task with
               | Some (log_path, process) -> (
@@ -361,7 +361,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
                     let log = Log_file.get ~unlink:true log_path in
                     let cmd =
                       c.Compiler.command ~flags:combined_flags ~output:obj
-                        ~objects:!visited_objects
+                        ~objects:objects_for_compilation
                     in
                     let filepath = Util.relative_to b.source obj.source.path in
                     Util.log_error ~log_output:log ~filepath ~target:b.name
@@ -374,7 +374,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
             | exn ->
                 let cmd =
                   c.Compiler.command ~flags:combined_flags ~output:obj
-                    ~objects:!visited_objects
+                    ~objects:(Queue.to_seq visited_objects)
                 in
                 let filepath = Util.relative_to b.source obj.source.path in
                 Util.log_error ~log_output:"" ~filepath ~target:b.name
@@ -383,7 +383,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
           entries)
     sequential_groups;
 
-  let objs = List.rev !all_objs in
+  let objs = Queue.to_seq visited_objects |> List.of_seq in
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);

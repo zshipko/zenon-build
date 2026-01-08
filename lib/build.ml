@@ -122,7 +122,7 @@ let add_source_file t path = t.files <- t.files @ [ Util.glob path ]
 
 let add_source_files t ?(reset = false) files =
   if reset then t.files <- [];
-  List.iter (fun f -> add_source_file t f) files
+  t.files <- t.files @ List.map Util.glob files
 
 let clean t = Eio.Path.rmtree ~missing_ok:true t.build
 let clean_obj t = Eio.Path.rmtree ~missing_ok:true (obj_path t)
