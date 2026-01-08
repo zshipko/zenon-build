@@ -119,10 +119,9 @@ let build t (b : Build.t) =
     source_files
 
 let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
-  Eff.handle b @@ fun () ->
   let verbose = Util.is_verbose b.log_level in
   Util.log_clear "◎ %s" b.name;
-  Option.iter (fun script -> Effect.perform (Eff.Script { script })) b.script;
+  Option.iter Eff.script b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
   (* need to preserve order of files from config *)
   let sources =
@@ -193,7 +192,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
     objs;
 
   (* Sort compilers: parallel ones first, then sequential ones *)
-  let compiler_groups =
+  let par, seq =
     Hashtbl.fold
       (fun name entries acc -> (name, List.rev entries) :: acc)
       objs_by_compiler []
@@ -205,6 +204,8 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
             | false, true -> 1
             | _ -> String.compare c1.name c2.name)
         | _ -> assert false)
+    |> List.partition (fun (_, entries) ->
+        match entries with (c, _, _) :: _ -> c.Compiler.parallel | [] -> false)
   in
 
   let update_build_state
@@ -225,14 +226,6 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
           objects_info)
   in
 
-  let parallel_groups, sequential_groups =
-    List.partition
-      (fun (_, entries) ->
-        match entries with (c, _, _) :: _ -> c.Compiler.parallel | [] -> false)
-      compiler_groups
-  in
-
-  Eio.Switch.run @@ fun sw ->
   (* Handle parallel compiler groups *)
   let parallel_tasks =
     let objects_for_compilation = Queue.to_seq visited_objects in
@@ -244,25 +237,17 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
               let flags' = Option.value ~default:(Flags.v ()) flags in
               let combined_flags = Flags.concat b_flags flags' in
               match
-                Effect.perform
-                  (Eff.Compile
-                     {
-                       compiler = c;
-                       output = obj;
-                       objects = objects_for_compilation;
-                       flags = combined_flags;
-                       sw;
-                     })
+                Eff.compile ~compiler:c ~output:obj
+                  ~objects:objects_for_compilation ~flags:combined_flags
               with
               | Some task -> Left (c, obj, flags, combined_flags, task)
-              | None -> Right (c, obj, flags))
+              | None -> Right (obj, c.name, flags))
             entries
         in
         (* cached object files *)
-        update_build_state
-          (List.map (fun (c, obj, flags) -> (obj, c.name, flags)) cached);
+        update_build_state cached;
         to_compile)
-      parallel_groups
+      par
   in
 
   let compiled_objs =
@@ -295,15 +280,8 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
             try
               let objects_for_compilation = Queue.to_seq visited_objects in
               let task =
-                Effect.perform
-                  (Eff.Compile
-                     {
-                       compiler = c;
-                       output = obj;
-                       objects = objects_for_compilation;
-                       flags = combined_flags;
-                       sw;
-                     })
+                Eff.compile ~compiler:c ~output:obj
+                  ~objects:objects_for_compilation ~flags:combined_flags
               in
               match task with
               | Some process -> (
@@ -330,7 +308,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
                   ~command:(String.concat " " cmd) ~exn ();
                 raise (Eff.Build_failed b.name))
           entries)
-    sequential_groups;
+    seq;
 
   let objs = Queue.to_seq visited_objects |> List.of_seq in
   Option.iter
@@ -344,10 +322,9 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
               (linker.wrap_c_flags !link_flags).link;
         }
       in
-      Effect.perform
-        (Eff.Link { output; linker; objects = objs; flags = final_link_flags }))
+      Eff.link ~output ~linker ~objects:objs ~flags:final_link_flags)
     b.output;
-  Option.iter (fun script -> Effect.perform (Eff.Script { script })) b.after;
+  Option.iter Eff.script b.after;
   Util.log_clear "✓ %s (%fsec) " b.name (Unix.gettimeofday () -. start);
   if execute then
     match b.output with
@@ -483,6 +460,7 @@ let run_all ?execute ?args ~log_level t ~env builds =
     Hashtbl.create (List.length builds + List.length external_deps)
   in
 
+  Eio.Switch.run @@ fun sw ->
   while not (List.is_empty !ready) do
     let completed =
       Eio.Fiber.List.filter_map
@@ -490,12 +468,13 @@ let run_all ?execute ?args ~log_level t ~env builds =
           try
             match node with
             | Node.Build build ->
+                Eff.handle build ~visited ~sw @@ fun () ->
                 let () = run_build ?execute ?execute_args:args t build in
                 Hashtbl.add visited (Node.node_id node) ();
                 Some node
             | External ext ->
-                Eff.handle ext.build @@ fun () ->
-                Effect.perform (Eff.External { ext; visited });
+                Eff.handle ext.build ~visited ~sw @@ fun () ->
+                Eff.extern ext;
                 Some node
             | _ -> None
           with

@@ -11,13 +11,12 @@ exception Build_failed of string
 
 type _ Effect.t +=
   | Script : { script : string } -> unit t
-  | External : { ext : Build.External.t; visited : visited } -> unit t
+  | External : { ext : Build.External.t } -> unit t
   | Compile : {
       compiler : Compiler.t;
       output : Object_file.t;
       objects : Object_file.t Seq.t;
       flags : Flags.t;
-      sw : Eio.Switch.t;
     }
       -> compile_process option t
   | Link : {
@@ -27,6 +26,15 @@ type _ Effect.t +=
       flags : Flags.t;
     }
       -> unit t
+
+let compile ~compiler ~output ~objects ~flags =
+  Effect.perform (Compile { compiler; output; objects; flags })
+
+let script script = Effect.perform (Script { script })
+let extern ext = Effect.perform (External { ext })
+
+let link ~output ~linker ~objects ~flags =
+  Effect.perform (Link { output; linker; objects; flags })
 
 let run_script mgr ~build_dir s =
   let cmd = [ "sh"; "-c"; s ] in
@@ -62,16 +70,16 @@ let run_external (e : Build.External.t) executed =
     Util.log_clear "%s" log;
     raise (Build_failed "")
 
-let handle (build : Build.t) f =
+let handle (build : Build.t) ~visited ~sw f =
   try f () with
   | effect Script { script }, k ->
       Util.log ~verbose:(Util.is_verbose build.log_level) "• SCRIPT %s" script;
       run_script build.Build.env#process_mgr ~build_dir:build.build script;
       continue k ()
-  | effect External { ext; visited }, k ->
+  | effect External { ext }, k ->
       run_external ext visited;
       continue k ()
-  | effect Compile { compiler; output; objects; flags; sw }, k ->
+  | effect Compile { compiler; output; objects; flags }, k ->
       let obj =
         Compiler.compile_obj compiler ~output ~sw ~log_level:build.log_level
           ~build_dir:build.build ~build_mtime:build.mtime ~env:build.env
