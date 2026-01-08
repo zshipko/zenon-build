@@ -3,7 +3,7 @@ open Common
 
 let install ~path ~builds ~prefix ~version ~uninstall () =
   Eio_posix.run @@ fun env ->
-  let x = load_config ~builds env path in
+  let x = load_config ~log_level:`Info ~builds env path in
   let builds = filter_builds x builds in
   let build_map = make_build_map x in
   let builds_with_deps_set = builds_with_deps build_map builds in

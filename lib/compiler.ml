@@ -110,6 +110,11 @@ let ocaml =
     name = "ocamlfind";
     command =
       (fun ~flags ~objects ~output ->
+        let p, s = output.Object_file.path in
+        let o_path =
+          let s = Filename.chop_extension s ^ ".o" in
+          (p, s)
+        in
         let include_paths =
           List.concat_map
             (fun obj ->
@@ -128,7 +133,7 @@ let ocaml =
           "-color=always";
           "-c";
           "-o";
-          Eio.Path.native_exn output.Object_file.path;
+          Eio.Path.native_exn o_path;
         ]
         @ include_paths @ flags.Flags.compile
         @ [ Eio.Path.native_exn output.source.path ]);

@@ -20,7 +20,8 @@
  (synopsis "Zenon: C build tool of the 21st century")
  (description "A build tool for compilers supporting separate compilation")
  (depends
-  ocaml
+  (ocaml
+   (>= 5.3.0))
   eio_posix
   yaml
   re

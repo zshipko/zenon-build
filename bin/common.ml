@@ -30,7 +30,7 @@ let filter_builds_for_cwd rel_path builds x =
         x
   | _ -> x
 
-let load_config ~builds env path : Build.t list =
+let load_config ~builds ~log_level env path : Build.t list =
   let normalized_path = Unix.realpath path in
   let eio_path = Eio.Path.(env#fs / normalized_path) in
 
@@ -60,7 +60,7 @@ let load_config ~builds env path : Build.t list =
 
   Sys.chdir project_root;
 
-  match Config.load ~env project_root_path with
+  match Config.load ~env ~log_level project_root_path with
   | Ok x -> filter_builds_for_cwd rel_path builds x
   | Error (`Msg err) -> failwith err
 

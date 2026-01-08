@@ -5,7 +5,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
     ~pkg ~(linker : string option) ~log_level () =
   Eio_posix.run @@ fun env ->
   let ignore_patterns = List.map Util.glob ignore in
-  let x = load_config ~builds env path in
+  let x = load_config ~log_level ~builds env path in
   let builds, x =
     match x with
     | [] ->
@@ -15,6 +15,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
               ~source:Eio.Path.(env#fs / path)
               ~files:file ~name:"default"
               ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
+              ~log_level
               ?linker:
                 (Option.map
                    (fun name -> Config.Compiler_config.(linker (named name)))
@@ -93,6 +94,7 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
           Plan.build plan
             {
               build with
+              log_level;
               pkgconf = build.Build.pkgconf @ pkg;
               ignore = build.Build.ignore @ ignore_patterns;
               output;

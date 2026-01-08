@@ -18,11 +18,16 @@ type t = {
   disable_cache : bool;
   mtime : float;
   parallel : bool;
+  log_level : Util.log_level;
   mutable files : Re.t list;
   mutable headers : Re.t list;
   mutable flags : Flags.t;
   mutable compiler_flags : (string, Flags.t) Hashtbl.t;
 }
+
+module External = struct
+  type nonrec t = { path : string; target : string; build : t }
+end
 
 let add_compile_flags t = Flags.add_compile_flags t.flags
 let add_link_flags t = Flags.add_link_flags t.flags
@@ -31,7 +36,7 @@ let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     ?after ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
     ?(compiler_flags = []) ?(files = []) ?(headers = []) ?(ignore = [])
-    ?(disable_cache = false) ?output ~source ~name env =
+    ?(disable_cache = false) ?(log_level = `Quiet) ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler.Set.default
@@ -73,6 +78,7 @@ let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
     disable_cache;
     mtime = Option.value ~default:(Unix.gettimeofday ()) mtime;
     hidden;
+    log_level;
   }
 
 let special_dirs = String_set.of_list [ "zenon-build"; ".git"; ".jj" ]

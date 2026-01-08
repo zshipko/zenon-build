@@ -21,9 +21,7 @@ let cflag =
   in
   Arg.(
     value
-    & opt_all
-        (pair ~sep:'=' string string)
-        []
+    & opt_all (pair ~sep:'=' string string) []
     & info [ "cflag"; "c" ] ~doc ~docv:"LANG=FLAG")
 
 let ldflag =
@@ -33,9 +31,7 @@ let ldflag =
   in
   Arg.(
     value
-    & opt_all
-        (pair ~sep:'=' string string)
-        []
+    & opt_all (pair ~sep:'=' string string) []
     & info [ "lflag"; "l" ] ~doc ~docv:"LANG=FLAG")
 
 let ignore =

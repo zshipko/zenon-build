@@ -4,12 +4,12 @@ open Zenon
 open Flag
 open Common
 
-let clean ~path ~builds () =
+let clean ~path ~log_level ~builds () =
   Eio_posix.run @@ fun env ->
   if List.is_empty builds then
     Eio.Path.rmtree ~missing_ok:true Eio.Path.(env#cwd / "zenon-build")
   else
-    let x = load_config ~builds env path in
+    let x = load_config ~log_level ~builds env path in
     let builds = String_set.of_list builds in
     let x =
       if String_set.is_empty builds then x
@@ -37,21 +37,25 @@ let cmd_build =
     if not (Unix.isatty Unix.stderr) then max 1 (List.length verbose)
     else List.length verbose
   in
-  if do_clean then clean ~path ~builds ();
+  let log_level = Util.log_level verbosity_level in
+  if do_clean then clean ~log_level ~path ~builds ();
   Build_command.build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run
-    ~arg ~pkg ~linker
-    ~log_level:(Util.log_level verbosity_level)
-    ()
+    ~arg ~pkg ~linker ~log_level ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")
   @@
-  let+ builds = targets and+ path = path in
-  clean ~path ~builds ()
+  let+ builds = targets and+ path = path and+ verbose = verbose in
+  let verbosity_level =
+    if not (Unix.isatty Unix.stderr) then max 1 (List.length verbose)
+    else List.length verbose
+  in
+  let log_level = Util.log_level verbosity_level in
+  clean ~log_level ~path ~builds ()
 
 let run ~path ~target ~args ~build () =
   Eio_posix.run @@ fun env ->
-  let x = load_config ~builds:[ build ] env path in
+  let x = load_config ~log_level:`Info ~builds:[ build ] env path in
   let b = find_build x target in
   match b with
   | None -> Fmt.failwith "no target found"
@@ -145,7 +149,7 @@ let cmd_install =
 let list_tools ~path () =
   Eio_posix.run @@ fun env ->
   (* Load config to register custom compilers/linkers *)
-  (match Config.load ~env Eio.Path.(env#fs / path) with
+  (match Config.load ~log_level:`Quiet ~env Eio.Path.(env#fs / path) with
   | Ok _ -> ()
   | Error (`Msg err) -> Util.log "WARNING failed to load config: %s" err);
 

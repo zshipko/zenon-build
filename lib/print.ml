@@ -5,11 +5,11 @@ module Dot = Graph.Graphviz.Dot (struct
 
   let graph_attributes _ = []
   let default_vertex_attributes _ = []
-  let vertex_name v = "\"" ^ value_id v ^ "\""
+  let vertex_name v = "\"" ^ Node.node_id v ^ "\""
 
   let vertex_attributes v =
     match v with
-    | Build b ->
+    | Node.Build b ->
         [ `Shape `Box; `Label b.name; `Style `Filled; `Fillcolor 0xE8F4F8 ]
     | Src s ->
         [
@@ -40,7 +40,7 @@ module Dot = Graph.Graphviz.Dot (struct
 
   let get_subgraph v =
     match v with
-    | Build _ -> None
+    | Node.Build _ -> None
     | Src _ -> None
     | Obj _ -> None
     | Output _ -> None
@@ -50,7 +50,8 @@ module Dot = Graph.Graphviz.Dot (struct
 
   let edge_attributes (_, e, _) =
     match e with
-    | Some (Script _) -> [ `Label "script"; `Color 0x9B59B6; `Style `Dashed ]
+    | Some (Node.Script _) ->
+        [ `Label "script"; `Color 0x9B59B6; `Style `Dashed ]
     | Some (Compiler (c, _)) ->
         [ `Label c.name; `Color 0x3498DB; `Arrowhead `Normal ]
     | Some (Linker l) -> [ `Label l.name; `Color 0x27AE60; `Penwidth 2.0 ]

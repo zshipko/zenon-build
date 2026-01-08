@@ -241,7 +241,7 @@ let read_file_or_default path =
     | None -> Ok (empty, Unix.gettimeofday ())
   else Ok (empty, Unix.gettimeofday ())
 
-let init ?mtime ~env path t =
+let init ?mtime ~env ~log_level path t =
   let () =
     List.iter
       (fun c -> Compiler.register @@ Compiler_config.compiler ~compilers:[] c)
@@ -344,17 +344,17 @@ let init ?mtime ~env path t =
             ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
             ~compiler_flags ?output ~source ~files:(t.files @ config.files)
             ~headers:config.headers ~name ~ignore:all_ignore
-            ~hidden:config.hidden ?mtime env
+            ~hidden:config.hidden ~log_level ?mtime env
         in
         Some build)
     t.build
 
-let load ~env path =
+let load ~env ~log_level path =
   let project_root =
     if Eio.Path.is_directory path then path
     else
       match Eio.Path.split path with None -> assert false | Some (p, _) -> p
   in
   match read_file_or_default path with
-  | Ok (config, mtime) -> Ok (init ~mtime ~env project_root config)
+  | Ok (config, mtime) -> Ok (init ~mtime ~env ~log_level project_root config)
   | Error e -> Error e
