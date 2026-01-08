@@ -49,9 +49,7 @@ build:
       - '*.c'
     depends-on:
       - mylib-static
-      - ..:say-hi
-      - ..:hello2
-      # - ..:libtest1.a
+      - ./say-hi:say-hi
     flags:
       - lang: c
         compile:

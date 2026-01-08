@@ -1,0 +1,4 @@
+build:
+  - name: say-hi
+    script: |
+      echo "Hello, world!"
