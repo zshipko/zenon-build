@@ -80,7 +80,6 @@ let build t (b : Build.t) =
       |> Seq.iter (fun ext -> Build.add_source_file b ("**." ^ ext))
   in
   let source_files = Build.locate_source_files b |> List.of_seq in
-  (* Store ordered source files in the plan for later use *)
   Hashtbl.replace t.ordered_sources b.name source_files;
   let flags = Flags.v () in
   let build_node = Build b in
@@ -178,7 +177,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
       run_script b.env#process_mgr ~build_dir:b.build s)
     b.script;
   let pkg = Pkg_config.flags ~env:b.env b.pkgconf in
-  (* Use ordered sources from Plan hashtable to preserve file order from config *)
+  (* need to preserve order of files from config *)
   let sources =
     Hashtbl.find_opt t.ordered_sources b.name |> Option.value ~default:[]
   in
@@ -205,6 +204,7 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
            not (String_set.is_empty (String_set.inter c.ext source_exts)))
     |> Option.value ~default:Compiler.clang
   in
+  (* combine the compiler-specifiv flags with the wrapped c flags *)
   let b_flags =
     let c_flags =
       Hashtbl.find_opt b.compiler_flags "c"
@@ -222,95 +222,168 @@ let run_build t ?(execute = false) ?(execute_args = []) ?(log_level = `Quiet)
     Flags.concat l_flags @@ Flags.concat wrapped_c b.flags
   in
   let link_flags = ref b_flags in
-  let count = ref 0 in
-
   let start = Unix.gettimeofday () in
   let visited_flags = Hashtbl.create 8 in
   let visited_objects = ref [] in
-  let do_parallel = ref b.parallel in
+  let build_state_mutex = Eio.Mutex.create () in
+
+  (* Group objects by compiler for better parallelism *)
+  let objs_by_compiler = Hashtbl.create 8 in
+  List.iter
+    (fun (v', obj) ->
+      let obj_node = Obj obj in
+      match G.E.label @@ G.find_edge t.graph v' obj_node with
+      | None -> ()
+      | Some edge' -> (
+          match edge' with
+          | Compiler (c, flags) ->
+              let obj = c.transform_output obj in
+              let entry = (c, flags, obj) in
+              let entries = Hashtbl.find_opt objs_by_compiler c.name in
+              Hashtbl.replace objs_by_compiler c.name
+                (entry :: Option.value ~default:[] entries)
+          | _ -> ()))
+    objs;
+
+  (* Sort compilers: parallel ones first, then sequential ones *)
+  let compiler_groups =
+    Hashtbl.fold
+      (fun name entries acc -> (name, List.rev entries) :: acc)
+      objs_by_compiler []
+    |> List.sort (fun (_, entries1) (_, entries2) ->
+           match (entries1, entries2) with
+           | (c1, _, _) :: _, (c2, _, _) :: _ -> (
+               match (c1.Compiler.parallel, c2.Compiler.parallel) with
+               | true, false -> -1 (* parallel first *)
+               | false, true -> 1
+               | _ -> String.compare c1.name c2.name)
+           | _ -> assert false)
+  in
+
+  let all_objs = ref [] in
+
+  let update_build_state
+      (objects_info : (Object_file.t * string * Flags.t option) list) =
+    Eio.Mutex.use_rw ~protect:false build_state_mutex (fun () ->
+        List.iter
+          (fun (obj, compiler_name, flags_opt) ->
+            let flags = Option.value ~default:(Flags.v ()) flags_opt in
+            visited_objects := !visited_objects @ [ obj ];
+            all_objs := obj :: !all_objs;
+            let key =
+              Digest.to_hex @@ Digest.string @@ compiler_name
+              ^ String.concat "_" flags.link
+              ^ String.concat "_" flags.compile
+            in
+            if not (Hashtbl.mem visited_flags key) then (
+              Hashtbl.add visited_flags key true;
+              link_flags := Flags.concat !link_flags flags))
+          objects_info)
+  in
+
+  let parallel_groups, sequential_groups =
+    List.partition
+      (fun (_, entries) ->
+        match entries with (c, _, _) :: _ -> c.Compiler.parallel | [] -> false)
+      compiler_groups
+  in
 
   Eio.Switch.run @@ fun sw ->
-  let objs =
-    List.map
-      (fun (v', obj) ->
-        let obj_node = Obj obj in
-        match G.E.label @@ G.find_edge t.graph v' obj_node with
-        | None -> None
-        | Some edge' -> (
-            match edge' with
-            | Compiler (c, flags) ->
-                incr count;
-                do_parallel := !do_parallel && c.parallel;
-                let obj = c.transform_output obj in
-                Option.some
-                @@ ( obj,
-                     fun () ->
-                       let flags = Option.value ~default:(Flags.v ()) flags in
-                       let () =
-                         let combined_flags = Flags.concat b_flags flags in
-                         let key =
-                           Digest.to_hex @@ Digest.string @@ c.name
-                           ^ String.concat "_" flags.link
-                           ^ String.concat "_" flags.compile
-                         in
-                         try
-                           let task =
-                             Compiler.compile_obj c ~output:obj ~sw ~log_level
-                               ~build_dir:b.build ~build_mtime:b.mtime
-                               ~env:b.env ~objects:!visited_objects
-                               combined_flags
-                           in
-                           (match task with
-                           | Some (log_path, process) -> (
-                               try
-                                 Eio.Process.await_exn process;
-                                 visited_objects := !visited_objects @ [ obj ];
-                                 Eio.Path.unlink
-                                   log_path (* Delete log on success *)
-                               with exn ->
-                                 let log = Log_file.get ~unlink:true log_path in
-                                 let cmd =
-                                   c.command ~flags:combined_flags ~output:obj
-                                     ~objects:!visited_objects
-                                 in
-                                 let filepath =
-                                   Util.relative_to b.source obj.source.path
-                                 in
-                                 Util.log_error ~log_output:log ~filepath
-                                   ~target:b.name
-                                   ~command:(String.concat " " cmd) ~exn ();
-                                 raise (Build_failed b.name))
-                           | None ->
-                               visited_objects := !visited_objects @ [ obj ]);
-                           if not (Hashtbl.mem visited_flags key) then
-                             let () = Hashtbl.add visited_flags key true in
-                             link_flags := Flags.concat !link_flags flags
-                         with
-                         | Build_failed _ as e -> raise e
-                         | Eio.Cancel.Cancelled _ as e -> raise e
-                         | exn ->
-                             let cmd =
-                               c.command ~flags:combined_flags ~output:obj
-                                 ~objects:!visited_objects
-                             in
-                             let filepath =
-                               Util.relative_to b.source obj.source.path
-                             in
-                             Util.log_error ~log_output:"" ~filepath
-                               ~target:b.name ~command:(String.concat " " cmd)
-                               ~exn ();
-                             raise (Build_failed b.name)
-                       in
-                       () )
-            | _ -> None))
-      objs
+  (* Handle parallel compiler groups *)
+  let parallel_tasks =
+    List.concat_map
+      (fun (_, entries) ->
+        let to_compile, cached =
+          List.partition_map
+            (fun (c, flags, obj) ->
+              let flags' = Option.value ~default:(Flags.v ()) flags in
+              let combined_flags = Flags.concat b_flags flags' in
+              match
+                Compiler.compile_obj c ~output:obj ~sw ~log_level
+                  ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
+                  ~objects:!visited_objects combined_flags
+              with
+              | Some task -> Left (c, obj, flags, combined_flags, task)
+              | None -> Right (c, obj, flags))
+            entries
+        in
+        (* cached object files *)
+        update_build_state
+          (List.map (fun (c, obj, flags) -> (obj, c.name, flags)) cached);
+        to_compile)
+      parallel_groups
   in
-  let objs, tasks = List.filter_map Fun.id objs |> List.split in
-  let () =
-    if List.is_empty tasks then ()
-    else if !do_parallel then Eio.Fiber.all tasks
-    else List.iter (fun f -> f ()) tasks
+
+  let compiled_objs =
+    Eio.Fiber.List.filter_map
+      (fun (c, obj, flags, combined_flags, (log_path, process)) ->
+        try
+          Eio.Process.await_exn process;
+          Eio.Path.unlink log_path;
+          Some (obj, c.name, flags)
+        with exn ->
+          let log = Log_file.get ~unlink:true log_path in
+          let cmd =
+            c.Compiler.command ~flags:combined_flags ~output:obj
+              ~objects:!visited_objects
+          in
+          let filepath = Util.relative_to b.source obj.source.path in
+          Util.log_error ~log_output:log ~filepath ~target:b.name
+            ~command:(String.concat " " cmd) ~exn ();
+          raise (Build_failed b.name))
+      parallel_tasks
   in
+  update_build_state compiled_objs;
+
+  (* sequential compilers *)
+  List.iter
+    (fun (_, entries) ->
+      if not (List.is_empty entries) then
+        List.iter
+          (fun (c, flags, obj) ->
+            let combined_flags =
+              let flags' = Option.value ~default:(Flags.v ()) flags in
+              Flags.concat b_flags flags'
+            in
+            try
+              let task =
+                Compiler.compile_obj c ~output:obj ~sw ~log_level
+                  ~build_dir:b.build ~build_mtime:b.mtime ~env:b.env
+                  ~objects:!visited_objects combined_flags
+              in
+              match task with
+              | Some (log_path, process) -> (
+                  try
+                    Eio.Process.await_exn process;
+                    update_build_state [ (obj, c.name, flags) ];
+                    Eio.Path.unlink log_path
+                  with exn ->
+                    let log = Log_file.get ~unlink:true log_path in
+                    let cmd =
+                      c.Compiler.command ~flags:combined_flags ~output:obj
+                        ~objects:!visited_objects
+                    in
+                    let filepath = Util.relative_to b.source obj.source.path in
+                    Util.log_error ~log_output:log ~filepath ~target:b.name
+                      ~command:(String.concat " " cmd) ~exn ();
+                    raise (Build_failed b.name))
+              | None -> update_build_state [ (obj, c.name, flags) ]
+            with
+            | Build_failed _ as e -> raise e
+            | Eio.Cancel.Cancelled _ as e -> raise e
+            | exn ->
+                let cmd =
+                  c.Compiler.command ~flags:combined_flags ~output:obj
+                    ~objects:!visited_objects
+                in
+                let filepath = Util.relative_to b.source obj.source.path in
+                Util.log_error ~log_output:"" ~filepath ~target:b.name
+                  ~command:(String.concat " " cmd) ~exn ();
+                raise (Build_failed b.name))
+          entries)
+    sequential_groups;
+
+  let objs = List.rev !all_objs in
   Option.iter
     (fun output ->
       Util.log ~verbose "⁕ LINK(%s) %s" linker.name (Eio.Path.native_exn output);
