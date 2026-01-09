@@ -26,13 +26,7 @@
           ocaml-base-compiler = "*";
         };
 
-        # Apply any overrides
-        overlay = final: prev: {
-          # Example: ${packageName} = prev.${packageName}.overrideAttrs (...);
-        };
-
-        finalScope = scope.overrideScope overlay;
-        mainPackage = finalScope.${packageName};
+        mainPackage = scope.${packageName};
       in
       {
         packages.default = mainPackage;
@@ -47,7 +41,7 @@
           ];
         };
 
-        legacyPackages = finalScope;
+        legacyPackages = scope;
       }
     );
 }
