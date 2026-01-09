@@ -29,7 +29,10 @@
         mainPackage = scope.${packageName};
       in
       {
-        packages.default = mainPackage;
+        packages = {
+          default = mainPackage;
+          ${packageName} = mainPackage;
+        };
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ mainPackage ];
