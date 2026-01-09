@@ -19,13 +19,13 @@ you can compile and link these files into an executable by running:
 $ zenon build -o abc
 ```
 
-Or linking the `libgit2` library using `pkg-config`:
+Or a static library:
 
 ```sh
-$ zenon build -o abc --pkg libgit2
+$ zenon build -o libabc.a
 ```
 
-And run it:
+Or create an executable and link `libgit2` using `pkg-config` and run it:
 
 ```sh
 $ zenon build -o abc --pkg libgit2 --run
@@ -79,13 +79,7 @@ $ zenon build example
 
 will build just the `example` target.
 
-For full command line commands and flags, see the output of `zenon --help`
-
-`zenon` can also detect and build source files without a configuration file:
-
-```sh
-$ zenon build -o example
-```
+For full command line options, see the output of `zenon --help`
 
 When run without a `zenon.yaml` file, zenon will:
 - automatically discover source files in the current directory
@@ -106,7 +100,7 @@ $ zenon build -f 'src/*.c'
 
 ## Configuration
 
-`zenon` uses yaml for configuration, to get started create a `zenon.yaml` file in the root of your project:
+For the full experience you will need to setup a `zenon.yaml` file:
 
 ```yaml
 build:
@@ -230,7 +224,7 @@ flags:
     link: ["-lm"]
 ```
 
-- `lang` - Language (file extension without dot: `c`, `cpp`, `hs`, etc.)
+- `lang` - Language (`all` or file extension without dot: `c`, `cpp`, `hs`, etc.)
 - `compile` - Flags passed to compiler
 - `link` - Flags passed to linker
 
