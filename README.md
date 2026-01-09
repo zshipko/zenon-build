@@ -33,31 +33,31 @@ $ zenon build -o abc --pkg libgit2 --run
 
 ## Installation
 
-[opam](https://opam.ocaml.org/):
+[**opam**](https://opam.ocaml.org/):
 
 ```sh
 $ opam install -y git+https://codeberg.org/zshipko/zenon-build.git
 ```
 
-nix flake:
+[**nix**](https://nixos.org/) flakes:
 
-Run `zenon` directly:
+Install `zenon`:
+```sh
+$ nix profile install "git+ssh://git@codeberg.org/zshipko/zenon-build"
+$ zenon
+```
+
+Run or run it:
 ```sh
 $ nix run "git+ssh://git@codeberg.org/zshipko/zenon-build"
 ```
 
-Or build it:
-```sh
-$ nix build "git+ssh://git@codeberg.org/zshipko/zenon-build"
-$ cp ./result/bin/zenon ~/.local/bin # <- change this path if that's not in your $PATH
-$ zenon
-```
 
-[dune](https://dune.build/):
+[**dune**](https://dune.build/):
 
 ```sh
 $ git clone https://codeberg.org/zshipko/zenon-build.git
-$ cd zenon
+$ cd zenon-build
 $ dune pkg lock && dune build
 $ dune install
 $ zenon
