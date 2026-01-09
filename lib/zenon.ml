@@ -9,3 +9,5 @@ module Plan = Plan
 module Config = Config
 module Print = Print
 module Command = Command
+module Node = Node
+module Eff = Eff

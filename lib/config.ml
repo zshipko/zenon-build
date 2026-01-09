@@ -108,17 +108,12 @@ module Compiler_config = struct
 end
 
 module Build_config = struct
-  type flags = {
-    compile : string list; [@default []]
-    link : string list; [@default []]
-  }
-  [@@deriving yaml]
-
   module Lang_flags = struct
     type t = {
       lang : string;
       compile : string list; [@default []]
       link : string list; [@default []]
+      all : string list; [@default []]
     }
     [@@deriving yaml]
   end
@@ -315,7 +310,8 @@ let init ?mtime ~env ~log_level path t =
           List.map
             (fun v ->
               ( v.Build_config.Lang_flags.lang,
-                Flags.v ~compile:v.compile ~link:v.link () ))
+                Flags.v ~compile:(v.compile @ v.all) ~link:(v.link @ v.all) ()
+              ))
             (t.flags @ config.flags)
         in
         let source =

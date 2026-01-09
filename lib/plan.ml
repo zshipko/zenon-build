@@ -51,7 +51,8 @@ let build t (b : Build.t) =
   Option.iter (G.add_vertex t.graph) output_node;
   let ignore_regex = Re.compile (Re.alt b.ignore) in
   let linker =
-    Linker.auto_select_linker ~sources:source_files ~linker:b.linker b.name
+    Linker.auto_select_linker ~sources:source_files ?output:b.output
+      ~linker:b.linker b.name
   in
   Eio.Fiber.List.iter
     (fun (source_file : Source_file.t) ->
@@ -138,7 +139,9 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
         (Node.Src s, obj))
       sources
   in
-  let linker = Linker.auto_select_linker ~sources ~linker:b.linker b.name in
+  let linker =
+    Linker.auto_select_linker ~sources ?output:b.output ~linker:b.linker b.name
+  in
   let primary_compiler =
     let source_exts =
       List.fold_left

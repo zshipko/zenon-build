@@ -87,6 +87,8 @@ let ghc =
           "-v0";
           "-package";
           "base";
+          "-package";
+          "text";
           "-c";
           "-o";
           Eio.Path.native_exn output.Object_file.path;

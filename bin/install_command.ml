@@ -22,7 +22,8 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
         | Some output_path -> (
             let sources = Build.locate_source_files b |> List.of_seq in
             let linker =
-              Linker.auto_select_linker ~sources ~linker:b.linker b.name
+              Linker.auto_select_linker ~sources ?output:b.output
+                ~linker:b.linker b.name
             in
             let install_dir =
               match linker.link_type with

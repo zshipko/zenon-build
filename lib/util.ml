@@ -196,6 +196,7 @@ let glob =
 let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
   && String.ends_with ~suffix:".a" filename
+  || String.ends_with ~suffix:".cmxa" filename
 
 let is_shared_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename

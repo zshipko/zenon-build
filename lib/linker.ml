@@ -132,6 +132,8 @@ let ghc =
           "-fdiagnostics-color=always";
           "-package";
           "base";
+          "-package";
+          "text";
           "-o";
           Eio.Path.native_exn output;
         ]
@@ -173,6 +175,42 @@ let ocaml =
         ]
         @ include_paths @ flags.Flags.link @ objs);
     link_type = Executable;
+    wrap_c_flags = Compiler.ocaml.wrap_c_flags;
+  }
+
+let ocaml_lib =
+  {
+    name = "ocamlfind";
+    exts = Compiler.ocaml.ext;
+    has_runtime = true;
+    command =
+      (fun ~flags ~objs ~output ->
+        let include_paths =
+          List.concat_map
+            (fun x ->
+              match Eio.Path.split x.path with
+              | Some (parent, _) -> [ "-I"; Eio.Path.native_exn @@ parent ]
+              | None -> [])
+            objs
+        in
+        let objs =
+          List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
+        in
+        [
+          "ocamlfind";
+          "ocamlopt";
+          "-a";
+          "-cc";
+          "clang";
+          "-I";
+          "+unix";
+          "-color=always";
+          "-linkall";
+          "-o";
+          Eio.Path.native_exn output;
+        ]
+        @ include_paths @ flags.Flags.link @ objs);
+    link_type = Static;
     wrap_c_flags = Compiler.ocaml.wrap_c_flags;
   }
 
@@ -224,6 +262,7 @@ let default =
     ats2;
     flang;
     ocaml;
+    ocaml_lib;
   ]
 
 let all = ref default
@@ -251,6 +290,7 @@ let find_by_name linkers l =
       | "sml" | "mlton" -> Some mlton
       | "ats2" | "ats" | "pats" | "patscc" -> Some ats2
       | "ocaml" | "ml" | "ocamlfind" | "ocamlopt" -> Some ocaml
+      | "ocaml-lib" | "ocaml-static" -> Some ocaml_lib
       | _ -> None)
 
 let match_linker ~target ~source_exts linkers =
@@ -273,8 +313,15 @@ let match_linker ~target ~source_exts linkers =
            target
            (String.concat ", " (List.map (fun l -> l.name) linkers)))
 
-let auto_select_linker ~sources ?(linker = clang) target =
+let auto_select_linker ~sources ?output ?(linker = clang) target =
   if linker.has_runtime then linker
+  else if
+    Option.map
+      (fun output ->
+        String.ends_with ~suffix:".cmxa" (Eio.Path.native_exn output))
+      output
+    |> Option.value ~default:false
+  then ocaml_lib
   else
     let source_exts =
       List.fold_left
