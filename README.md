@@ -85,8 +85,7 @@ For full command line options, see the output of `zenon --help`
 
 When run without a `zenon.yaml` file, zenon will:
 - automatically discover source files in the current directory
-- detect the appropriate compiler based on file extensions
-- build an executable with a default name based on the directory or detected sources
+- detect the appropriate compiler and linker based on file extensions
 
 You can also specify source files directly via the command line using the `-f` flag:
 
