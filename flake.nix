@@ -10,24 +10,25 @@
       flake-utils,
       opam-nix,
       nixpkgs,
-    }@inputs:
+    }:
     let
       package = "zenon";
     in
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
         on = opam-nix.lib.${system};
         scope = on.buildOpamProject { } package ./. { ocaml-base-compiler = "*"; };
         overlay = final: prev: {
           # Your overrides go here
         };
+
+        packages = scope.overrideScope overlay;
       in
       {
-        legacyPackages = scope.overrideScope overlay;
+        legacyPackages = packages;
 
-        packages.default = self.legacyPackages.${system}.${package};
+        packages.default = packages.${package};
       }
     );
 }

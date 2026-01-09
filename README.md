@@ -37,7 +37,7 @@ $ zenon
 nix flake:
 
 ```sh
-$ nix build codeberg:zshipko/zenon
+$ nix build "git+https://codeberg.org/zshipko/zenon"
 $ ./result/bin/zenon 
 ```
 
