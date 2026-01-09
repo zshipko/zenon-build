@@ -1,5 +1,7 @@
 # zenon: C build tool of the 21st century
 
+![screenshot of a build using zenon](zenon.gif)
+
 An experimental build system and script runner for C and other languages/compilers supporting [separate compilation](https://www.cs.sjsu.edu/~pearce/modules/lectures/cpp/advanced/SeparateCompilation.htm).
 
 Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](https://clang.llvm.org/), [flang](https://flang.llvm.org/docs/),
