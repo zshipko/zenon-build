@@ -121,6 +121,12 @@ let cmd_gen_gitignore =
   let+ builds = targets and+ path = path and+ output = output in
   Gen_command.gitignore ~path ~builds ?output ()
 
+let cmd_gen_merlin =
+  Cmd.v (Cmd.info "merlin" ~doc:"Generate .merlin file")
+  @@
+  let+ builds = targets and+ path = path and+ output = output in
+  Gen_command.merlin ~path ~builds ?output ()
+
 let cmd_gen =
   Cmd.group
     (Cmd.info "gen" ~doc:"Generate files")
@@ -130,6 +136,7 @@ let cmd_gen =
       cmd_gen_pkg_config;
       cmd_gen_graph;
       cmd_gen_gitignore;
+      cmd_gen_merlin;
     ]
 
 let cmd_install =

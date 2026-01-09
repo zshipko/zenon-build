@@ -328,7 +328,9 @@ let init ?mtime ~env ~log_level path t =
           match config.name with
           | Some name -> name
           | None -> (
-              match config.target with Some p -> p | None -> "default")
+              match config.target with
+              | Some p -> Filename.basename p
+              | None -> "default")
         in
         let build_ignore_patterns = List.map Util.glob config.ignore in
         let all_ignore =

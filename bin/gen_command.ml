@@ -193,3 +193,90 @@ let compile_commands ~path ~builds ~format ?output () =
             Eio.Path.(env#cwd / path)
             contents
       | None -> print_string contents)
+
+let merlin ~path ~builds ?output () =
+  Eio_posix.run @@ fun env ->
+  let x = load_config ~log_level:`Quiet ~builds env path in
+  let builds = filter_builds x builds in
+  let build_map = make_build_map x in
+  let builds_with_deps_set = builds_with_deps build_map builds in
+  let targets =
+    List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x
+  in
+
+  let ocaml_extensions = String_set.of_list [ "ml"; "mli" ] in
+
+  let source_dirs, build_dirs, ocaml_flags =
+    List.fold_left
+      (fun (source_dirs, build_dirs, ocaml_flags) (b : Build.t) ->
+        let files = Build.locate_source_files b in
+        let new_source_dirs =
+          Seq.fold_left
+            (fun acc (source : Source_file.t) ->
+              let dir = Filename.dirname @@ Eio.Path.native_exn source.path in
+              String_set.add dir acc)
+            String_set.empty files
+        in
+        let new_ocaml_flags =
+          Seq.fold_left
+            (fun acc (source : Source_file.t) ->
+              let ext = Source_file.ext source in
+              if String_set.mem ext ocaml_extensions then
+                match Hashtbl.find_opt b.compiler_flags ext with
+                | Some flags ->
+                    String_set.union acc (String_set.of_list flags.compile)
+                | None -> acc
+              else acc)
+            String_set.empty files
+        in
+        let build_dir =
+          Eio.Path.native_exn Eio.Path.(b.build / "obj" / b.name)
+        in
+        ( String_set.union source_dirs new_source_dirs,
+          String_set.add build_dir build_dirs,
+          String_set.union ocaml_flags new_ocaml_flags ))
+      (String_set.empty, String_set.empty, String_set.empty)
+      targets
+  in
+
+  let pkgs =
+    List.fold_left
+      (fun acc (b : Build.t) ->
+        String_set.union (String_set.of_list b.pkgconf) acc)
+      String_set.empty targets
+  in
+
+  let buffer = Buffer.create 1024 in
+  List.iter
+    (fun s ->
+      Buffer.add_string buffer "S ";
+      Buffer.add_string buffer s;
+      Buffer.add_char buffer '\n')
+    (String_set.to_list source_dirs);
+  List.iter
+    (fun s ->
+      Buffer.add_string buffer "B ";
+      Buffer.add_string buffer s;
+      Buffer.add_char buffer '\n')
+    (String_set.to_list build_dirs);
+  List.iter
+    (fun s ->
+      Buffer.add_string buffer "FLG ";
+      Buffer.add_string buffer s;
+      Buffer.add_char buffer '\n')
+    (String_set.to_list ocaml_flags);
+  List.iter
+    (fun s ->
+      Buffer.add_string buffer "PKG ";
+      Buffer.add_string buffer s;
+      Buffer.add_char buffer '\n')
+    (String_set.to_list pkgs);
+
+  let contents = Buffer.contents buffer in
+
+  match output with
+  | Some path ->
+      Eio.Path.save ~create:(`Or_truncate 0o644)
+        Eio.Path.(env#cwd / path)
+        contents
+  | None -> print_string contents
