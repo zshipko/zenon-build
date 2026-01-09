@@ -8,29 +8,23 @@ Out of the box, `zenon` supports [clang](https://clang.llvm.org/), [clang++](htt
 [ispc](https://ispc.github.io/), [ocaml](https://ocaml.org), [ghc](https://www.haskell.org/), [mlton](http://www.mlton.org) and [ats2](http://www.ats-lang.org)
 and additional compilers can be specified in the `zenon.yaml` file.
 
-`zenon` is particularly useful when you have some files in a directory, like:
+`zenon` is particularly useful when you have some files in a directory:
 
 ```sh
 $ ls
-a.c    b.c     c.c    d.ml
+a.c    b.c     c.c    d.hs
 ```
 
 you can compile and link these files into an executable by running:
 
 ```sh
-$ zenon build -o abcd
+$ zenon build -o example
 ```
 
-Or a static library:
+create an executable and link `libgit2` using `pkg-config` and run it:
 
 ```sh
-$ zenon build -o libabcd.a
-```
-
-Or create an executable and link `libgit2` using `pkg-config` and run it:
-
-```sh
-$ zenon build -o abcd --pkg libgit2 --run
+$ zenon build -o example --pkg libgit2 --run
 ```
 
 ## Installation
