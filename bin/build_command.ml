@@ -99,10 +99,9 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
               ignore = build.Build.ignore @ ignore_patterns;
               output;
               linker =
-                Option.map
-                  (fun l -> Config.Compiler_config.(linker @@ named l))
-                  linker
-                |> Option.value ~default:build.Build.linker;
+                (match linker with
+                | Some l -> Some Config.Compiler_config.(linker @@ named l)
+                | None -> build.Build.linker);
             }))
       x
   in

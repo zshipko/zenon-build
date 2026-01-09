@@ -52,7 +52,7 @@ let build t (b : Build.t) =
   let ignore_regex = Re.compile (Re.alt b.ignore) in
   let linker =
     Linker.auto_select_linker ~sources:source_files ?output:b.output
-      ~linker:b.linker b.name
+      ?linker:b.linker b.name
   in
   Eio.Fiber.List.iter
     (fun (source_file : Source_file.t) ->
@@ -140,7 +140,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
       sources
   in
   let linker =
-    Linker.auto_select_linker ~sources ?output:b.output ~linker:b.linker b.name
+    Linker.auto_select_linker ~sources ?output:b.output ?linker:b.linker b.name
   in
   let primary_compiler =
     let source_exts =
@@ -386,15 +386,11 @@ let run_all ?execute ?args ~log_level t ~env builds =
   let required_commands =
     List.fold_left
       (fun acc (build : Build.t) ->
-        let acc =
-          Hashtbl.fold
-            (fun _ compiler acc ->
-              let cmd = compiler.Compiler.name in
-              String_set.add cmd acc)
-            build.compiler_index acc
-        in
-        let linker_cmd = build.linker.name in
-        String_set.add linker_cmd acc)
+        Hashtbl.fold
+          (fun _ compiler acc ->
+            let cmd = compiler.Compiler.name in
+            String_set.add cmd acc)
+          build.compiler_index acc)
       String_set.empty builds
   in
   Command.check_commands checker (String_set.to_list required_commands);

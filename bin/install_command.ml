@@ -16,15 +16,15 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
     (* Uninstall mode *)
     List.iter
       (fun (b : Build.t) ->
+        let sources = Build.locate_source_files b |> List.of_seq in
+        let linker =
+          Linker.auto_select_linker ~sources ?output:b.output ?linker:b.linker
+            b.name
+        in
         (* Uninstall the built artifact *)
         (match b.output with
         | None -> ()
         | Some output_path -> (
-            let sources = Build.locate_source_files b |> List.of_seq in
-            let linker =
-              Linker.auto_select_linker ~sources ?output:b.output
-                ~linker:b.linker b.name
-            in
             let install_dir =
               match linker.link_type with
               | Linker.Executable -> make_install_path "bin"
@@ -59,7 +59,7 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
 
         (* Uninstall header files *)
         let headers = Build.locate_headers b |> List.of_seq in
-        if b.linker.link_type <> Executable && not (List.is_empty headers) then (
+        if linker.link_type <> Executable && not (List.is_empty headers) then (
           let include_name = lib_name b in
           let include_dir = make_install_path ("include/" ^ include_name) in
           List.iter
@@ -82,6 +82,11 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
     (* Install mode *)
     List.iter
       (fun (b : Build.t) ->
+        let sources = Build.locate_source_files b |> List.of_seq in
+        let linker =
+          Linker.auto_select_linker ~sources ?output:b.output ?linker:b.linker
+            b.name
+        in
         (* Install the built artifact *)
         (match b.output with
         | None -> Util.log "Skipping %s (no output)" b.name
@@ -89,10 +94,6 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
             (* Check if output file exists *)
             match Eio.Path.kind ~follow:true output_path with
             | `Regular_file -> (
-                let sources = Build.locate_source_files b |> List.of_seq in
-                let linker =
-                  Linker.auto_select_linker ~sources ~linker:b.linker b.name
-                in
                 let install_dir =
                   match linker.link_type with
                   | Linker.Executable -> make_install_path "bin"
@@ -139,7 +140,7 @@ let install ~path ~builds ~prefix ~version ~uninstall () =
 
         (* Install header files *)
         let headers = Build.locate_headers b |> List.of_seq in
-        if b.linker.link_type <> Executable && not (List.is_empty headers) then (
+        if linker.link_type <> Executable && not (List.is_empty headers) then (
           let include_name = lib_name b in
           let include_dir = make_install_path ("include/" ^ include_name) in
           Eio.Path.mkdirs ~perm:0o755 ~exists_ok:true include_dir;

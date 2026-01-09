@@ -7,7 +7,7 @@ type t = {
   build : path;
   compiler_index : (string, Compiler.t) Hashtbl.t;
   compilers : Compiler.Set.t;
-  linker : Linker.t;
+  linker : Linker.t option;
   script : string option;
   after : string option;
   depends_on : string list;
@@ -34,9 +34,9 @@ let add_link_flags t = Flags.add_link_flags t.flags
 let obj_path t = Eio.Path.(t.build / "obj" / t.name)
 
 let v ?build ?(parallel = true) ?(hidden = false) ?mtime ?(pkgconf = []) ?script
-    ?after ?(depends_on = []) ?flags ?(linker = Linker.clang) ?compilers
-    ?(compiler_flags = []) ?(files = []) ?(headers = []) ?(ignore = [])
-    ?(disable_cache = false) ?(log_level = `Quiet) ?output ~source ~name env =
+    ?after ?(depends_on = []) ?flags ?linker ?compilers ?(compiler_flags = [])
+    ?(files = []) ?(headers = []) ?(ignore = []) ?(disable_cache = false)
+    ?(log_level = `Quiet) ?output ~source ~name env =
   let compilers =
     match compilers with
     | None -> Compiler.Set.default

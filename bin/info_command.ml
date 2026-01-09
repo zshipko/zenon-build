@@ -14,7 +14,7 @@ let info ~path ~builds () =
     (fun (b : Build.t) ->
       let sources = Build.locate_source_files b |> List.of_seq in
       let linker =
-        Linker.auto_select_linker ~sources ?output:b.output ~linker:b.linker
+        Linker.auto_select_linker ~sources ?output:b.output ?linker:b.linker
           b.name
       in
       Fmt.pr "@[<v 2>Target: %s@," b.name;
