@@ -281,14 +281,14 @@ let init ?mtime ~env ~log_level path t =
               (fun name -> Compiler.find_by_name name)
               config.compilers
         in
-        let linker_name, link_type =
+        let linker_name =
           match config.Build_config.linker with
-          | Some linker -> (linker, "exe") (* User-specified linker *)
+          | Some linker -> Some linker (* User-specified linker *)
           | None -> (
               match config.target with
               | Some target when Util.is_static_lib (Filename.basename target)
                 ->
-                  ("ar", "static")
+                  Some "ar"
               | Some target when Util.is_shared_lib (Filename.basename target)
                 ->
                   let has_cxx =
@@ -297,14 +297,17 @@ let init ?mtime ~env ~log_level path t =
                       config.compilers
                   in
                   let linker_name =
-                    if has_cxx then "clang++-shared" else "clang-shared"
+                    if has_cxx then Some "clang++-shared"
+                    else Some "clang-shared"
                   in
-                  (linker_name, "shared")
-              | _ -> ("clang", "exe"))
+                  linker_name
+              | _ -> None)
         in
         let linker =
-          Compiler_config.linker
-          @@ { (Compiler_config.named linker_name) with link_type }
+          Option.map
+            (fun linker_name ->
+              Compiler_config.linker @@ Compiler_config.named linker_name)
+            linker_name
         in
         let compiler_flags =
           List.map
@@ -339,7 +342,7 @@ let init ?mtime ~env ~log_level path t =
         let build =
           Build.v ~parallel:config.parallel ?script:config.script
             ~pkgconf:(t.pkgconf @ config.pkgconf)
-            ?after:config.after ~depends_on:config.depends_on ~linker ~compilers
+            ?after:config.after ~depends_on:config.depends_on ?linker ~compilers
             ~compiler_flags ?output ~source ~files:(t.files @ config.files)
             ~headers:config.headers ~name ~ignore:all_ignore
             ~hidden:config.hidden ~log_level ?mtime env
