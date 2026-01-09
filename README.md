@@ -27,13 +27,21 @@ $ zenon build -o my.exe --pkg libgit2
 
 ## Installation
 
-Using [opam](https://opam.ocaml.org/):
+[opam](https://opam.ocaml.org/):
 
 ```sh
 $ opam pin add -y git+https://codeberg.org/zshipko/zenon.git
+$ zenon
 ```
 
-Or [dune](https://dune.build/):
+nix flake:
+
+```sh
+$ nix build codeberg:zshipko/zenon
+$ ./result/bin/zenon 
+```
+
+[dune](https://dune.build/):
 
 ```sh
 $ git clone https://codeberg.org/zshipko/zenon.git
@@ -41,6 +49,7 @@ $ cd zenon
 $ dune pkg lock
 $ dune build
 $ dune install
+$ zenon
 ```
 
 ## Running
