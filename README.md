@@ -16,13 +16,19 @@ a.c    b.c     c.c
 you can compile and link these files into an executable by running:
 
 ```sh
-$ zenon build -o my.exe
+$ zenon build -o abc
 ```
 
 Or linking the `libgit2` library using `pkg-config`:
 
 ```sh
-$ zenon build -o my.exe --pkg libgit2
+$ zenon build -o abc --pkg libgit2
+```
+
+And run it:
+
+```sh
+$ zenon build -o abc --pkg libgit2 --run
 ```
 
 ## Installation
@@ -30,15 +36,21 @@ $ zenon build -o my.exe --pkg libgit2
 [opam](https://opam.ocaml.org/):
 
 ```sh
-$ opam pin add -y git+https://codeberg.org/zshipko/zenon.git
-$ zenon
+$ opam install -y git+https://codeberg.org/zshipko/zenon.git
 ```
 
 nix flake:
 
+Run `zenon` directly:
 ```sh
-$ nix build "git+https://codeberg.org/zshipko/zenon"
-$ ./result/bin/zenon 
+$ nix run "git+ssh://git@codeberg.org/zshipko/zenon"
+```
+
+Or build it:
+```sh
+$ nix build "git+ssh://git@codeberg.org/zshipko/zenon"
+$ cp ./result/bin/zenon ~/.local/bin # <- change this path if that's not in your $PATH
+$ zenon
 ```
 
 [dune](https://dune.build/):
@@ -46,8 +58,7 @@ $ ./result/bin/zenon
 ```sh
 $ git clone https://codeberg.org/zshipko/zenon.git
 $ cd zenon
-$ dune pkg lock
-$ dune build
+$ dune pkg lock && dune build
 $ dune install
 $ zenon
 ```
