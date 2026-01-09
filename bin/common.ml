@@ -1,4 +1,4 @@
-open Zenon
+open Zenon_build
 
 let rec collect_dependencies build_map name visited =
   if String_set.mem name visited then visited

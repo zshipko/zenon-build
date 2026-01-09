@@ -1,4 +1,4 @@
-open Zenon
+open Zenon_build
 open Common
 
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run

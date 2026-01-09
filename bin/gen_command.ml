@@ -1,4 +1,4 @@
-open Zenon
+open Zenon_build
 open Common
 
 let pkg ~path ~prefix ~target ~version ?output () =

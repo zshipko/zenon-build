@@ -1,6 +1,6 @@
 open Cmdliner
 open Cmdliner.Term.Syntax
-open Zenon
+open Zenon_build
 open Flag
 open Common
 

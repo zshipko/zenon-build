@@ -1,5 +1,5 @@
 (library
- (name zenon)
+ (name zenon_build)
  (public_name zenon-build)
  (libraries eio_posix yaml re ocamlgraph fmt)
  (preprocess
