@@ -155,20 +155,9 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
   in
   (* combine the compiler-specifiv flags with the wrapped c flags *)
   let b_flags =
-    let c_flags =
-      Hashtbl.find_opt b.compiler_flags "c"
-      |> Option.value ~default:(Flags.v ())
-    in
-    let wrapped_c =
-      primary_compiler.wrap_c_flags
-        (Flags.concat
-           (Flags.v ~compile:pkg.compile ())
-           (Flags.v ~compile:c_flags.compile ()))
-    in
-    let l_flags =
-      Flags.concat (Flags.v ~link:pkg.link ()) (Flags.v ~link:c_flags.link ())
-    in
-    Flags.concat l_flags @@ Flags.concat wrapped_c b.flags
+    let pkg_flags = Flags.v ~compile:pkg.compile ~link:pkg.link () in
+    let wrapped_pkg_flags = primary_compiler.wrap_c_flags pkg_flags in
+    Flags.concat wrapped_pkg_flags b.flags
   in
   let link_flags = ref b_flags in
   let start = Unix.gettimeofday () in
@@ -320,9 +309,7 @@ let run_build t ?(execute = false) ?(execute_args = []) (b : Build.t) =
       let final_link_flags =
         {
           !link_flags with
-          link =
-            Util.remove_duplicates_preserving_order
-              (linker.wrap_c_flags !link_flags).link;
+          link = Util.remove_duplicates_preserving_order !link_flags.link;
         }
       in
       Eff.link ~output ~linker ~objects:objs ~flags:final_link_flags)
