@@ -12,25 +12,25 @@ and additional compilers can be specified in the `zenon.yaml` file.
 
 ```sh
 $ ls
-a.c    b.c     c.c
+a.c    b.c     c.c    d.ml
 ```
 
 you can compile and link these files into an executable by running:
 
 ```sh
-$ zenon build -o abc
+$ zenon build -o abcd
 ```
 
 Or a static library:
 
 ```sh
-$ zenon build -o libabc.a
+$ zenon build -o libabcd.a
 ```
 
 Or create an executable and link `libgit2` using `pkg-config` and run it:
 
 ```sh
-$ zenon build -o abc --pkg libgit2 --run
+$ zenon build -o abcd --pkg libgit2 --run
 ```
 
 ## Installation
