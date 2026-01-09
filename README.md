@@ -47,7 +47,7 @@ $ nix profile install "git+ssh://git@codeberg.org/zshipko/zenon-build"
 $ zenon
 ```
 
-Run or run it:
+Or just run it:
 ```sh
 $ nix run "git+ssh://git@codeberg.org/zshipko/zenon-build"
 ```
