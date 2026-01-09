@@ -111,33 +111,42 @@ let ghc =
     has_runtime = true;
     command =
       (fun ~flags ~objs ~output ->
-        let include_paths =
-          List.filter_map
-            (fun x ->
-              match Eio.Path.split x.source.path with
-              | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
-              | None -> None)
-            objs
-        in
-        let objs =
+        let objs' =
           List.map (fun obj -> Eio.Path.native_exn obj.Object_file.path) objs
         in
-        [
-          "ghc";
-          "-pgmc";
-          "clang";
-          "-pgml";
-          "clang";
-          "-v0";
-          "-fdiagnostics-color=always";
-          "-package";
-          "base";
-          "-package";
-          "text";
-          "-o";
-          Eio.Path.native_exn output;
-        ]
-        @ include_paths @ flags.Flags.link @ objs);
+        let filename = Filename.basename (snd output) in
+        if Util.is_static_lib filename then
+          [ "ar"; "rcs"; Eio.Path.native_exn output ] @ objs'
+        else
+          let shared =
+            if Util.is_shared_lib filename then
+              [ "-dynamic"; "-shared"; "-fPIC" ]
+            else []
+          in
+          let include_paths =
+            List.filter_map
+              (fun x ->
+                match Eio.Path.split x.source.path with
+                | Some (parent, _) -> Some ("-i" ^ Eio.Path.native_exn @@ parent)
+                | None -> None)
+              objs
+          in
+          [
+            "ghc";
+            "-pgmc";
+            "clang";
+            "-pgml";
+            "clang";
+            "-v0";
+            "-fdiagnostics-color=always";
+            "-package";
+            "base";
+            "-package";
+            "text";
+            "-o";
+            Eio.Path.native_exn output;
+          ]
+          @ shared @ include_paths @ flags.Flags.link @ objs');
     link_type = Executable;
     wrap_c_flags = Compiler.ghc.wrap_c_flags;
   }
@@ -313,27 +322,25 @@ let match_linker ~target ~source_exts linkers =
            target
            (String.concat ", " (List.map (fun l -> l.name) linkers)))
 
-let auto_select_linker ~sources ?output ?linker target =
-  match linker with
-  | Some l -> l
-  | None -> (
-      if
-        Option.map
-          (fun output ->
-            String.ends_with ~suffix:".cmxa" (Eio.Path.native_exn output))
-          output
-        |> Option.value ~default:false
-      then ocaml_lib
-      else
-        let source_exts =
-          List.fold_left
-            (fun acc src -> String_set.add (Source_file.ext src) acc)
-            String_set.empty sources
-        in
-        match match_linker ~target ~source_exts default with
+let auto_select_linker ~sources ?output ?(linker = clang) target =
+  if linker.has_runtime then linker
+  else if
+    Option.map
+      (fun output ->
+        String.ends_with ~suffix:".cmxa" (Eio.Path.native_exn output))
+      output
+    |> Option.value ~default:false
+  then ocaml_lib
+  else
+    let source_exts =
+      List.fold_left
+        (fun acc src -> String_set.add (Source_file.ext src) acc)
+        String_set.empty sources
+    in
+    match match_linker ~target ~source_exts default with
+    | Ok (Some linker) -> linker
+    | _ -> (
+        match match_linker ~target ~source_exts !all with
         | Ok (Some linker) -> linker
-        | _ -> (
-            match match_linker ~target ~source_exts !all with
-            | Ok (Some linker) -> linker
-            | Ok None -> clang
-            | Error msg -> Fmt.failwith "%s" msg))
+        | Ok None -> linker
+        | Error msg -> Fmt.failwith "%s" msg)
