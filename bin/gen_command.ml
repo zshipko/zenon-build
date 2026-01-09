@@ -203,77 +203,47 @@ let merlin ~path ~builds ?output () =
   let targets =
     List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x
   in
-
   let ocaml_extensions = String_set.of_list [ "ml"; "mli" ] in
-
-  let source_dirs, build_dirs, ocaml_flags =
+  let source_dirs, build_dirs, ocaml_flags, pkgs =
     List.fold_left
-      (fun (source_dirs, build_dirs, ocaml_flags) (b : Build.t) ->
+      (fun (source_dirs, ocaml_flags, build_dirs, pkgs) (b : Build.t) ->
         let files = Build.locate_source_files b in
-        let new_source_dirs =
+        let source_dirs, ocaml_flags, pkgs =
           Seq.fold_left
-            (fun acc (source : Source_file.t) ->
+            (fun (dirs', flags', pkgs') (source : Source_file.t) ->
               let dir = Filename.dirname @@ Eio.Path.native_exn source.path in
-              String_set.add dir acc)
-            String_set.empty files
-        in
-        let new_ocaml_flags =
-          Seq.fold_left
-            (fun acc (source : Source_file.t) ->
+              let dirs' = String_set.add dir dirs' in
               let ext = Source_file.ext source in
+              let pkgs = String_set.union (String_set.of_list b.pkgconf) pkgs in
               if String_set.mem ext ocaml_extensions then
                 match Hashtbl.find_opt b.compiler_flags ext with
                 | Some flags ->
-                    String_set.union acc (String_set.of_list flags.compile)
-                | None -> acc
-              else acc)
-            String_set.empty files
+                    ( dirs',
+                      String_set.union flags' (String_set.of_list flags.compile),
+                      pkgs )
+                | None -> (dirs', flags', pkgs')
+              else (dirs', flags', pkgs'))
+            (source_dirs, ocaml_flags, pkgs)
+            files
         in
         let build_dir =
           Eio.Path.native_exn Eio.Path.(b.build / "obj" / b.name)
         in
-        ( String_set.union source_dirs new_source_dirs,
-          String_set.add build_dir build_dirs,
-          String_set.union ocaml_flags new_ocaml_flags ))
-      (String_set.empty, String_set.empty, String_set.empty)
+        (source_dirs, ocaml_flags, String_set.add build_dir build_dirs, pkgs))
+      (String_set.empty, String_set.empty, String_set.empty, String_set.empty)
       targets
   in
-
-  let pkgs =
-    List.fold_left
-      (fun acc (b : Build.t) ->
-        String_set.union (String_set.of_list b.pkgconf) acc)
-      String_set.empty targets
-  in
-
   let buffer = Buffer.create 1024 in
-  List.iter
-    (fun s ->
-      Buffer.add_string buffer "S ";
-      Buffer.add_string buffer s;
-      Buffer.add_char buffer '\n')
-    (String_set.to_list source_dirs);
-  List.iter
-    (fun s ->
-      Buffer.add_string buffer "B ";
-      Buffer.add_string buffer s;
-      Buffer.add_char buffer '\n')
-    (String_set.to_list build_dirs);
-  List.iter
-    (fun s ->
-      Buffer.add_string buffer "FLG ";
-      Buffer.add_string buffer s;
-      Buffer.add_char buffer '\n')
-    (String_set.to_list ocaml_flags);
-  List.iter
-    (fun s ->
-      Buffer.add_string buffer "PKG ";
-      Buffer.add_string buffer s;
-      Buffer.add_char buffer '\n')
-    (String_set.to_list pkgs);
-
+  let add_line prefix s =
+    Buffer.add_string buffer @@ prefix ^ " ";
+    Buffer.add_string buffer s;
+    Buffer.add_char buffer '\n'
+  in
+  List.iter (add_line "S") (String_set.to_list source_dirs);
+  List.iter (add_line "B") (String_set.to_list build_dirs);
+  List.iter (add_line "FLG") (String_set.to_list ocaml_flags);
+  List.iter (add_line "PKG") (String_set.to_list pkgs);
   let contents = Buffer.contents buffer in
-
   match output with
   | Some path ->
       Eio.Path.save ~create:(`Or_truncate 0o644)
