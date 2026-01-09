@@ -19,7 +19,7 @@
         on = opam-nix.lib.${system};
 
         # Define the package name
-        packageName = "zenon";
+        packageName = "zenon-build";
 
         # Build the project scope
         scope = on.buildOpamProject { } packageName ./. {

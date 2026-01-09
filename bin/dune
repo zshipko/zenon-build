@@ -1,4 +1,4 @@
 (executable
  (public_name zenon)
  (name main)
- (libraries zenon cmdliner ezjsonm))
+ (libraries zenon-build cmdliner ezjsonm))

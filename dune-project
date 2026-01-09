@@ -1,6 +1,6 @@
 (lang dune 3.20)
 
-(name zenon)
+(name zenon-build)
 
 (generate_opam_files true)
 
@@ -16,7 +16,7 @@
 (documentation https://codeberg.org/zshipko/zenon)
 
 (package
- (name zenon)
+ (name zenon-build)
  (synopsis "Zenon: C build tool of the 21st century")
  (description "A build tool for compilers supporting separate compilation")
  (depends
