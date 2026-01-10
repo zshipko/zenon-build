@@ -81,8 +81,6 @@ let ghc =
         in
         [
           "ghc";
-          "-pgmc";
-          "clang";
           "-fdiagnostics-color=always";
           "-v0";
           "-package";
