@@ -29,7 +29,7 @@ let string_of_link_type = function
 let link t mgr ~output ~checker ~objs ~flags ~build_dir =
   Util.mkparent output;
   let cmd = t.command ~flags ~objs ~output in
-  Command.check_command checker (List.hd cmd);
+  Command.check_command checker t.name;
   Log_file.with_log_file ~build_dir
     ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
   @@ fun (tmp_path, log_file) ->

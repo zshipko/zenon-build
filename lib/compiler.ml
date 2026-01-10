@@ -246,7 +246,7 @@ let compile_obj t ~env ~sw ~output ~checker ~log_level ~build_dir ~build_mtime
         "COMPILE(%s) %s -> %s" t.name src_path obj_path;
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~flags ~output ~objects in
-      Command.check_command checker (List.hd cmd);
+      Command.check_command checker t.name;
       if log_level = `Debug then Util.log "  $ %s" (String.concat " " cmd);
       Log_file.with_log_file ~keep:true ~build_dir
         ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
