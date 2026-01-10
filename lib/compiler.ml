@@ -175,7 +175,7 @@ let mlton =
           "-c";
           String.concat " " args
           ^ Printf.sprintf
-              " && ld -r -keep_private_externs %s.0.o %s.1.o -o %s && rm \
+              " && ld -r %s.0.o %s.1.o -o %s && rm \
                %s.0.o %s.1.o"
               out out out out out;
         ]);
