@@ -193,6 +193,11 @@ let glob =
   Re.Glob.glob ~pathname:true ~anchored:true ~double_asterisk:true
     ~expand_braces:true
 
+let uname =
+  let ic = Unix.open_process_in "uname -s" in
+  Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+  String.trim @@ input_line ic
+
 let is_static_lib (filename : string) =
   String.starts_with ~prefix:"lib" filename
   && String.ends_with ~suffix:".a" filename
@@ -206,12 +211,6 @@ let is_shared_lib (filename : string) =
 let normalize_shared_lib_ext (filename : string) =
   if Sys.os_type = "Unix" && String.ends_with ~suffix:".so" filename then
     try
-      let ic = Unix.open_process_in "uname -s" in
-
-      let uname =
-        Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
-        String.trim @@ input_line ic
-      in
       if uname = "Darwin" then Filename.remove_extension filename ^ ".dylib"
       else filename
     with _ -> filename

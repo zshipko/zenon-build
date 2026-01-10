@@ -170,14 +170,16 @@ let mlton =
           [ "mlton"; "-cc"; "clang"; "-stop"; "o"; "-output"; out ]
           @ flags.compile @ [ src ]
         in
+        let keep_externs =
+          if Util.uname = "Darwin" then "-keep_private_externs" else ""
+        in
         [
           "sh";
           "-c";
           String.concat " " args
           ^ Printf.sprintf
-              " && ld -r %s.0.o %s.1.o -o %s && rm \
-               %s.0.o %s.1.o"
-              out out out out out;
+              " && ld -r %s %s.0.o %s.1.o -o %s && rm %s.0.o %s.1.o"
+              keep_externs out out out out out;
         ]);
     ext = String_set.of_list [ "sml"; "mlb" ];
     transform_output = Fun.id;
