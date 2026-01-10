@@ -377,24 +377,23 @@ let check_dependency_cycles t =
           (String.concat " -> " cycle_names))
     t.graph
 
-let run_all ?execute ?args ~log_level t ~env builds =
+let run_all ?execute ?args ~log_level t builds =
   add_dependency_edges t builds;
   check_dependency_cycles t;
 
   (* Check command availability before building *)
-  let checker = Command.v env#process_mgr in
-  let required_commands =
-    List.fold_left
-      (fun acc (build : Build.t) ->
-        Hashtbl.fold
-          (fun _ compiler acc ->
-            let cmd = compiler.Compiler.name in
-            String_set.add cmd acc)
-          build.compiler_index acc)
-      String_set.empty builds
-  in
-  Command.check_commands checker (String_set.to_list required_commands);
-
+  (* let checker = Command.v env#process_mgr in *)
+  (* let required_commands = *)
+  (* List.fold_left *)
+  (* (fun acc (build : Build.t) -> *)
+  (* Hashtbl.fold *)
+  (* (fun _ compiler acc -> *)
+  (* let cmd = compiler.Compiler.name in *)
+  (* String_set.add cmd acc) *)
+  (* build.compiler_index acc) *)
+  (* String_set.empty builds *)
+  (* in *)
+  (* Command.check_commands checker (String_set.to_list required_commands); *)
   let verbose = Util.is_verbose log_level in
   (if not verbose then
      let total_objs =

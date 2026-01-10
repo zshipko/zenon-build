@@ -71,6 +71,7 @@ let run_external (e : Build.External.t) executed =
     raise (Build_failed "")
 
 let handle (build : Build.t) ~visited ~sw f =
+  let checker = Command.v build.env#process_mgr in
   try f () with
   | effect Script { script }, k ->
       Util.log ~verbose:(Util.is_verbose build.log_level) "• SCRIPT %s" script;
@@ -81,9 +82,9 @@ let handle (build : Build.t) ~visited ~sw f =
       continue k ()
   | effect Compile { compiler; output; objects; flags }, k ->
       let obj =
-        Compiler.compile_obj compiler ~output ~sw ~log_level:build.log_level
-          ~build_dir:build.build ~build_mtime:build.mtime ~env:build.env
-          ~objects flags
+        Compiler.compile_obj compiler ~checker ~output ~sw
+          ~log_level:build.log_level ~build_dir:build.build
+          ~build_mtime:build.mtime ~env:build.env ~objects flags
       in
       let obj = Option.map (fun (a, b) -> (a, Process b)) obj in
       continue k obj
@@ -91,8 +92,8 @@ let handle (build : Build.t) ~visited ~sw f =
       (if Util.is_debug build.log_level then
          let link_cmd = linker.command ~flags ~objs:objects ~output in
          Util.log "  $ %s" (String.concat " " link_cmd));
-      Linker.link linker build.env#process_mgr ~objs:objects ~output ~flags
-        ~build_dir:build.build;
+      Linker.link linker build.env#process_mgr ~checker ~objs:objects ~output
+        ~flags ~build_dir:build.build;
       continue k ()
 
 let wait_process (log_path, Process process) =

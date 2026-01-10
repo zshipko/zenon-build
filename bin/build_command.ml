@@ -105,5 +105,5 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
             }))
       x
   in
-  Plan.run_all ~execute:run ~args:arg ~log_level ~env plan
+  Plan.run_all ~execute:run ~args:arg ~log_level plan
     (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x)

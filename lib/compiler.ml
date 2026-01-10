@@ -215,8 +215,8 @@ let flang =
 let default = [ clang; clangxx; ispc; ghc; mlton; ats2; flang; ocaml ]
 let all = ref default
 
-let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
-    flags =
+let compile_obj t ~env ~sw ~output ~checker ~log_level ~build_dir ~build_mtime
+    ~objects flags =
   let st =
     try
       Option.some
@@ -246,6 +246,7 @@ let compile_obj t ~env ~sw ~output ~log_level ~build_dir ~build_mtime ~objects
         "COMPILE(%s) %s -> %s" t.name src_path obj_path;
       Util.mkparent output.Object_file.path;
       let cmd = t.command ~flags ~output ~objects in
+      Command.check_command checker (List.hd cmd);
       if log_level = `Debug then Util.log "  $ %s" (String.concat " " cmd);
       Log_file.with_log_file ~keep:true ~build_dir
         ~name:(Digest.to_hex (Digest.string (String.concat " " cmd)))
