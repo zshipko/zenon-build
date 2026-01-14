@@ -310,12 +310,27 @@ let init ?mtime ~env ~log_level path t =
             linker_name
         in
         let compiler_flags =
-          List.map
-            (fun v ->
-              ( v.Build_config.Lang_flags.lang,
-                Flags.v ~compile:(v.compile @ v.all) ~link:(v.link @ v.all) ()
-              ))
-            (t.flags @ config.flags)
+          let tbl = Hashtbl.create 8 in
+          let add_flags flags =
+            List.iter
+              (fun (f : Build_config.Lang_flags.t) ->
+                let lang = f.lang in
+                let compile = f.compile @ f.all in
+                let link = f.link @ f.all in
+                let existing =
+                  Option.value (Hashtbl.find_opt tbl lang) ~default:(Flags.v ())
+                in
+                let new_flags =
+                  Flags.v
+                    ~compile:(existing.compile @ compile)
+                    ~link:(existing.link @ link) ()
+                in
+                Hashtbl.replace tbl lang new_flags)
+              flags
+          in
+          add_flags t.flags;
+          add_flags config.flags;
+          List.of_seq (Hashtbl.to_seq tbl)
         in
         let source =
           match config.root with None -> path | Some p -> Eio.Path.(path / p)
