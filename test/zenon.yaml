@@ -1,6 +1,3 @@
-# Test configuration for Zenon build system
-# Tests various languages, build types, and features
-
 # Global flags applied to all builds
 flags:
   - lang: c

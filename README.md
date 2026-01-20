@@ -95,6 +95,8 @@ $ zenon build -f 'src/*.c'
 
 ## Configuration
 
+To setup a new configuration file you can use `zenon init` or write it by hand.
+
 For the full experience you will need to setup a `zenon.yaml` file:
 
 ```yaml

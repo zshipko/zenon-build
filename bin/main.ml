@@ -210,6 +210,26 @@ let cmd_tools =
   let+ path = path in
   list_tools ~path ()
 
+let cmd_init =
+  Cmd.v (Cmd.info "init" ~doc:"Initialise a new zenon build file")
+  @@
+  let+ path = path
+  and+ file = file
+  and+ verbose = verbose
+  and+ ignore = ignore
+  and+ ldflag = ldflag
+  and+ cflag = cflag
+  and+ pkg = pkg
+  and+ linker = linker
+  and+ target = target in
+  let verbosity_level =
+    if not (Unix.isatty Unix.stderr) then max 1 (List.length verbose)
+    else List.length verbose
+  in
+  let log_level = Util.log_level verbosity_level in
+  Init_command.init ~path ~log_level ~file ~ignore ~ldflag ~cflag ~pkg ~linker
+    ~target
+
 let main () =
   try
     Cmd.eval ~catch:false
@@ -222,6 +242,7 @@ let main () =
            cmd_gen;
            cmd_install;
            cmd_tools;
+           cmd_init;
          ]
   with
   | Invalid_argument msg ->
