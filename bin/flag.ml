@@ -46,6 +46,10 @@ let run =
   let doc = "Run after compiling" in
   Arg.(value & flag & info [ "run"; "r" ] ~doc)
 
+let watch =
+  let doc = "Watch for file changes and rebuild automatically." in
+  Arg.(value & flag & info [ "w"; "watch" ] ~doc)
+
 let arg =
   let doc = "Run argument" in
   Arg.(value & opt_all string [] & info [ "arg" ] ~doc ~docv:"ARGUMENT")

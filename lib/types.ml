@@ -1,6 +1,7 @@
 type path = Eio.Fs.dir_ty Eio.Path.t
 
 module String_set = Set.Make (String)
+module String_map = Map.Make (String)
 
 module Path_set = Set.Make (struct
   type t = path

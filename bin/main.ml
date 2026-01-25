@@ -32,7 +32,8 @@ let cmd_build =
   and+ linker = linker
   and+ run = run
   and+ verbose = verbose
-  and+ do_clean = clean_build in
+  and+ do_clean = clean_build
+  and+ watch = watch in
   let verbosity_level =
     if not (Unix.isatty Unix.stderr) then max 1 (List.length verbose)
     else List.length verbose
@@ -40,7 +41,7 @@ let cmd_build =
   let log_level = Util.log_level verbosity_level in
   if do_clean then clean ~log_level ~path ~builds ();
   Build_command.build ?output ~ignore ~cflags ~ldflags ~path ~builds ~file ~run
-    ~arg ~pkg ~linker ~log_level ()
+    ~arg ~pkg ~linker ~log_level ~watch ()
 
 let cmd_clean =
   Cmd.v (Cmd.info "clean")

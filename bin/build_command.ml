@@ -2,55 +2,94 @@ open Zenon_build
 open Common
 
 let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
-    ~pkg ~(linker : string option) ~log_level () =
+    ~pkg ~(linker : string option) ~log_level ~watch () =
   Eio_posix.run @@ fun env ->
-  let ignore_patterns = List.map Util.glob ignore in
-  let x = load_config ~log_level ~builds env path in
-  let builds, x =
-    match x with
-    | [] ->
-        ( [ "default" ],
-          [
-            Build.v env ~ignore:ignore_patterns ~pkgconf:pkg ~flags:(Flags.v ())
-              ~source:Eio.Path.(env#fs / path)
-              ~files:file ~name:"default"
-              ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
-              ~log_level
-              ?linker:
-                (Option.map
-                   (fun name -> Config.Compiler_config.(linker (named name)))
-                   linker);
-          ] )
-    | x -> (builds, x)
+  let get_config_path () =
+    let eio_path = Eio.Path.(env#fs / Unix.realpath path) in
+    let dir_path =
+      if Eio.Path.is_directory eio_path then eio_path
+      else
+        match Eio.Path.split eio_path with Some (d, _) -> d | None -> eio_path
+    in
+    Config.find_config_in_parents dir_path
   in
-  let builds = filter_builds x builds in
-  let build_map = make_build_map x in
-  let builds_with_deps_set = builds_with_deps build_map builds in
-  let plan = Plan.v () in
-  (* Separate generic and language-specific flags *)
-  let generic_cflags, lang_cflags =
-    List.partition (fun (lang, _) -> lang = "all") cflags
+
+  let get_file_mtimes build_configs =
+    let all_files = ref String_map.empty in
+    (* Add config file mtime *)
+    (match get_config_path () with
+    | Some config_path ->
+        let path_str = Eio.Path.native_exn config_path in
+        let mtime = (Eio.Path.stat ~follow:true config_path).mtime in
+        all_files := String_map.add path_str mtime !all_files
+    | None -> ());
+    List.iter
+      (fun (build : Build.t) ->
+        let sources = Build.locate_source_files build |> List.of_seq in
+        List.iter
+          (fun (sf : Source_file.t) ->
+            let path = Eio.Path.native_exn sf.path in
+            try
+              let mtime = (Eio.Path.stat ~follow:true sf.path).mtime in
+              all_files := String_map.add path mtime !all_files
+            with _ ->
+              (* File might have been deleted during the build process,
+                 which is fine. *)
+              ())
+          sources)
+      build_configs;
+    !all_files
   in
-  let generic_ldflags, lang_ldflags =
-    List.partition (fun (lang, _) -> lang = "all") ldflags
-  in
-  let generic_cflags = List.map snd generic_cflags in
-  let generic_ldflags = List.map snd generic_ldflags in
-  let cflags_by_lang = Hashtbl.create 8 in
-  List.iter
-    (fun (lang, flag) ->
-      let flags = try Hashtbl.find cflags_by_lang lang with Not_found -> [] in
-      Hashtbl.replace cflags_by_lang lang (flag :: flags))
-    lang_cflags;
-  let ldflags_by_lang = Hashtbl.create 8 in
-  List.iter
-    (fun (lang, flag) ->
-      let flags =
-        try Hashtbl.find ldflags_by_lang lang with Not_found -> []
-      in
-      Hashtbl.replace ldflags_by_lang lang (flag :: flags))
-    lang_ldflags;
-  let () =
+
+  let do_build build_configs =
+    let ignore_patterns = List.map Util.glob ignore in
+    let targets, current_build_configs =
+      match build_configs with
+      | [] ->
+          ( [ "default" ],
+            [
+              Build.v env ~ignore:ignore_patterns ~pkgconf:pkg
+                ~flags:(Flags.v ())
+                ~source:Eio.Path.(env#fs / path)
+                ~files:file ~name:"default"
+                ?output:(Option.map (fun x -> Eio.Path.(env#cwd / x)) output)
+                ~log_level
+                ?linker:
+                  (Option.map
+                     (fun name -> Config.Compiler_config.(linker (named name)))
+                     linker);
+            ] )
+      | configs -> (builds, configs)
+    in
+    let active_targets = filter_builds current_build_configs targets in
+    let build_map = make_build_map current_build_configs in
+    let builds_with_deps_set = builds_with_deps build_map active_targets in
+    let plan = Plan.v () in
+    (* Separate generic and language-specific flags *)
+    let generic_cflags, lang_cflags =
+      List.partition (fun (lang, _) -> lang = "all") cflags
+    in
+    let generic_ldflags, lang_ldflags =
+      List.partition (fun (lang, _) -> lang = "all") ldflags
+    in
+    let generic_cflags = List.map snd generic_cflags in
+    let generic_ldflags = List.map snd generic_ldflags in
+    let cflags_by_lang = Hashtbl.create 8 in
+    List.iter
+      (fun (lang, flag) ->
+        let flags =
+          try Hashtbl.find cflags_by_lang lang with Not_found -> []
+        in
+        Hashtbl.replace cflags_by_lang lang (flag :: flags))
+      lang_cflags;
+    let ldflags_by_lang = Hashtbl.create 8 in
+    List.iter
+      (fun (lang, flag) ->
+        let flags =
+          try Hashtbl.find ldflags_by_lang lang with Not_found -> []
+        in
+        Hashtbl.replace ldflags_by_lang lang (flag :: flags))
+      lang_ldflags;
     List.iter
       (fun build ->
         if
@@ -103,7 +142,28 @@ let build ?output ?(ignore = []) ~arg ~cflags ~ldflags ~path ~builds ~file ~run
                 | Some l -> Some Config.Compiler_config.(linker @@ named l)
                 | None -> build.Build.linker);
             }))
-      x
+      current_build_configs;
+    Plan.run_all ~execute:run ~args:arg ~log_level plan
+      (List.filter
+         (fun b -> String_set.mem b.Build.name builds_with_deps_set)
+         current_build_configs);
+    get_file_mtimes current_build_configs
   in
-  Plan.run_all ~execute:run ~args:arg ~log_level plan
-    (List.filter (fun b -> String_set.mem b.Build.name builds_with_deps_set) x)
+
+  let initial_build_configs = load_config ~log_level ~builds env path in
+  let initial_mtimes = do_build initial_build_configs in
+
+  if watch then
+    let rec loop mtimes =
+      Eio.Time.sleep env#clock 2.0;
+      let new_build_configs = load_config ~log_level ~builds env path in
+      let new_mtimes = get_file_mtimes new_build_configs in
+      if not (String_map.equal Float.equal mtimes new_mtimes) then (
+        Util.log
+          ~verbose:(Util.is_verbose log_level)
+          "+ Change detected, rebuilding...";
+        let updated_mtimes = do_build new_build_configs in
+        loop updated_mtimes)
+      else loop mtimes
+    in
+    loop initial_mtimes
